@@ -333,6 +333,28 @@ class GeminiLiveClient:
         except Exception as e:
             logger.error(f"Error sending manual screen: {e}")
 
+    async def describe_screen(self):
+        """Send screen capture + ask the model to describe it (combined in single message)."""
+        if not self.gemini_ready:
+            print("  ⏳ Waiting for Gemini to connect...")
+            return
+        try:
+            screen_data = self.screen_capture.capture()
+            if screen_data:
+                screen_b64 = base64.b64encode(screen_data).decode("utf-8")
+                prompt = "Please describe what you see on my screen right now."
+                
+                # Send BOTH screen and text in ONE message so they're processed together
+                message = json.dumps({
+                    "screen_frame": screen_b64,
+                    "text": prompt
+                })
+                await self.websocket.send(message)
+                logger.info(f"Screen captured and sent with prompt ({len(screen_data)/1024:.1f} KB)")
+                print(f"You: [screen + '{prompt}']")
+        except Exception as e:
+            logger.error(f"Error in describe_screen: {e}")
+
     async def _receive_loop(self):
         """Receive and process server responses."""
         while self.is_running:
@@ -392,9 +414,10 @@ class GeminiLiveClient:
         print("Gemini Live Assistant Client (Demo Mode)")
         print("=" * 50)
         print("Commands:")
-        print("  [text]  - Send text message to assistant")
-        print("  /screen - Capture and send screen now")
-        print("  /quit   - Exit the client")
+        print("  [text]   - Send text message to assistant")
+        print("  /screen  - Capture and send screen now (context only)")
+        print("  /describe - Capture screen + ask model to describe it")
+        print("  /quit    - Exit the client")
         print("")
         print("Demo Settings:")
         print(f"  Screen capture: {'every ' + str(SCREEN_CAPTURE_INTERVAL) + 's' if ENABLE_SCREEN_CAPTURE else 'DISABLED'}")
@@ -423,6 +446,10 @@ class GeminiLiveClient:
                 
                 if user_input.lower() == "/screen":
                     await self.send_screen_now()
+                    continue
+
+                if user_input.lower() == "/describe":
+                    await self.describe_screen()
                     continue
 
                 if user_input:
