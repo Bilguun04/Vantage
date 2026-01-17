@@ -71,6 +71,7 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                 }))
 
                 # Configure the Live session with Google Search tool
+                # Note: native-audio model only supports AUDIO response modality
                 config = {
                     "response_modalities": ["AUDIO"],
                     "tools": [{"google_search": {}}],
@@ -186,14 +187,26 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         if "audio_chunk" in data and data["audio_chunk"]:
             audio_bytes = base64.b64decode(data["audio_chunk"])
             await self._send_audio_to_gemini(audio_bytes)
+        
+        # Handle audio end signal (user stopped speaking)
+        # Note: Gemini's built-in VAD handles this, so we just log it
+        if data.get("audio_end"):
+            logger.info("Client signaled audio end (Gemini VAD will handle turn completion)")
 
-        # Handle screen frame (image)
-        if "screen_frame" in data and data["screen_frame"]:
+        # Handle screen frame - check if there's also a text prompt
+        has_screen = "screen_frame" in data and data["screen_frame"]
+        has_text = "text" in data and data["text"]
+        
+        if has_screen and has_text:
+            # Send image AND text together (best for visual queries)
+            image_bytes = base64.b64decode(data["screen_frame"])
+            await self._send_image_to_gemini(image_bytes, with_prompt=data["text"])
+        elif has_screen:
+            # Screen only - send as context (no prompt, turn not complete)
             image_bytes = base64.b64decode(data["screen_frame"])
             await self._send_image_to_gemini(image_bytes)
-
-        # Handle text input (for testing/accessibility)
-        if "text" in data and data["text"]:
+        elif has_text:
+            # Text only
             await self._send_text_to_gemini(data["text"])
 
     async def _send_audio_to_gemini(self, audio_bytes: bytes):
@@ -207,10 +220,18 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
             # Don't log every chunk - too verbose. Log at debug level only.
         except Exception as e:
             logger.error(f"Error sending audio to Gemini: {e}")
+    
+    # Note: Gemini Live API has built-in VAD that automatically detects
+    # when the user stops speaking, so we don't need manual signaling.
 
-    async def _send_image_to_gemini(self, image_bytes: bytes):
+    async def _send_image_to_gemini(self, image_bytes: bytes, with_prompt: str = None):
         """
         Send image/screenshot data to Gemini Live session.
+        Uses send_client_content with inline_data for discrete images.
+        
+        Args:
+            image_bytes: The image data
+            with_prompt: Optional text prompt to send with the image
         """
         try:
             # Detect image type (default to JPEG for screenshots)
@@ -218,13 +239,28 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
             if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
                 mime_type = "image/png"
 
-            logger.info(f"Sending screen frame to Gemini ({len(image_bytes)/1024:.1f} KB)")
-            await self.session.send_realtime_input(
-                video={"data": image_bytes, "mime_type": mime_type}
+            logger.info(f"Sending screen frame to Gemini ({len(image_bytes)/1024:.1f} KB, mime={mime_type})")
+            
+            # Base64 encode the image for inline_data
+            image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+            
+            # Build parts list - image first, then optional text
+            parts = [
+                {"inline_data": {"mime_type": mime_type, "data": image_b64}}
+            ]
+            
+            if with_prompt:
+                parts.append({"text": with_prompt})
+                logger.info(f"Sending image with prompt: '{with_prompt[:50]}...'")
+            
+            # Send as client content (not realtime input)
+            await self.session.send_client_content(
+                turns=[{"role": "user", "parts": parts}],
+                turn_complete=True if with_prompt else False  # Only complete turn if there's a prompt
             )
-            logger.info("Screen frame sent successfully")
+            logger.info("Screen frame sent successfully via send_client_content")
         except Exception as e:
-            logger.error(f"Error sending image to Gemini: {e}")
+            logger.error(f"Error sending image to Gemini: {e}", exc_info=True)
 
     async def _send_text_to_gemini(self, text: str):
         """
@@ -312,20 +348,17 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                                         "mime_type": part.inline_data.mime_type
                                     }))
 
-                        # Handle text response (direct text output)
+                        # Handle text response
+                        # Note: part.thought is a boolean flag indicating if text is "thinking"
                         if hasattr(part, 'text') and part.text:
-                            logger.info(f"Model text: {part.text[:100]}...")
+                            is_thought = getattr(part, 'thought', False) is True
+                            if is_thought:
+                                logger.info(f"Model thought: {part.text[:100]}...")
+                            else:
+                                logger.info(f"Model text: {part.text[:100]}...")
                             await self.send(text_data=json.dumps({
                                 "type": "text_response",
                                 "text": part.text
-                            }))
-                        
-                        # Handle thought (model's thinking/reasoning - this is where screen descriptions come from!)
-                        if hasattr(part, 'thought') and part.thought:
-                            logger.info(f"Model thought: {part.thought[:100]}...")
-                            await self.send(text_data=json.dumps({
-                                "type": "text_response",
-                                "text": part.thought
                             }))
 
             # Handle tool calls (Google Search)
