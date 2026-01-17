@@ -71,6 +71,7 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                 }))
 
                 # Configure the Live session with Google Search tool
+                # Note: native-audio model only supports AUDIO response modality
                 config = {
                     "response_modalities": ["AUDIO"],
                     "tools": [{"google_search": {}}],
@@ -186,6 +187,11 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         if "audio_chunk" in data and data["audio_chunk"]:
             audio_bytes = base64.b64decode(data["audio_chunk"])
             await self._send_audio_to_gemini(audio_bytes)
+        
+        # Handle audio end signal (user stopped speaking)
+        # Note: Gemini's built-in VAD handles this, so we just log it
+        if data.get("audio_end"):
+            logger.info("Client signaled audio end (Gemini VAD will handle turn completion)")
 
         # Handle screen frame - check if there's also a text prompt
         has_screen = "screen_frame" in data and data["screen_frame"]
@@ -214,6 +220,9 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
             # Don't log every chunk - too verbose. Log at debug level only.
         except Exception as e:
             logger.error(f"Error sending audio to Gemini: {e}")
+    
+    # Note: Gemini Live API has built-in VAD that automatically detects
+    # when the user stops speaking, so we don't need manual signaling.
 
     async def _send_image_to_gemini(self, image_bytes: bytes, with_prompt: str = None):
         """
