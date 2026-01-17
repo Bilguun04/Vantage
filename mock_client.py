@@ -250,20 +250,18 @@ class GeminiLiveClient:
             await self.cleanup()
 
     async def _send_audio_loop(self):
-        """Send audio chunks to server with speech detection.
+        """Stream audio to server with speech detection and screen context.
         
-        Strategy: Start streaming when speech detected, continue for a bit after
-        silence is detected to capture trailing audio, then stop and signal end.
+        Strategy: When speech starts, capture screen and send with first audio chunk.
+        Continue streaming audio until speech ends.
         """
-        # Skip entirely if audio capture is disabled
         if not ENABLE_AUDIO_CAPTURE:
             while self.is_running:
                 await asyncio.sleep(1.0)
             return
         
-        # State tracking
-        is_streaming = False  # Are we currently sending to Gemini?
-        silence_counter = 0   # How many consecutive silent intervals?
+        is_streaming = False
+        silence_counter = 0
         SILENCE_INTERVALS_TO_STOP = int(SILENCE_DURATION_TO_END_TURN / AUDIO_SEND_INTERVAL)
             
         while self.is_running:
@@ -285,35 +283,43 @@ class GeminiLiveClient:
                     volume = np.abs(audio_array).mean()
                     
                     if volume > SPEECH_DETECTED_THRESHOLD:
-                        # Speech detected - start or continue streaming
                         if not is_streaming:
                             is_streaming = True
                             print("  🎤 [Listening...]")
-                            logger.info(f"Speech detected (volume: {volume:.0f}), starting stream")
+                            logger.info(f"Speech detected (volume: {volume:.0f})")
+                            
+                            # Capture screen and send WITH first audio chunk
+                            screen_data = self.screen_capture.capture()
+                            audio_b64 = base64.b64encode(audio_buffer).decode("utf-8")
+                            
+                            if screen_data:
+                                screen_b64 = base64.b64encode(screen_data).decode("utf-8")
+                                await self.websocket.send(json.dumps({
+                                    "screen_frame": screen_b64,
+                                    "audio_chunk": audio_b64
+                                }))
+                                logger.info(f"Screen + audio sent ({len(screen_data)/1024:.1f} KB)")
+                            else:
+                                await self.websocket.send(json.dumps({"audio_chunk": audio_b64}))
+                        else:
+                            # Continue streaming audio
+                            audio_b64 = base64.b64encode(audio_buffer).decode("utf-8")
+                            await self.websocket.send(json.dumps({"audio_chunk": audio_b64}))
                         
-                        silence_counter = 0  # Reset silence counter
-                        
-                        # Send audio
-                        audio_b64 = base64.b64encode(audio_buffer).decode("utf-8")
-                        await self.websocket.send(json.dumps({"audio_chunk": audio_b64}))
+                        silence_counter = 0
                         
                     elif is_streaming:
-                        # Currently streaming but volume is low
                         silence_counter += 1
-                        
-                        # Still send audio during grace period (capture trailing speech)
+                        # Still send during grace period
                         audio_b64 = base64.b64encode(audio_buffer).decode("utf-8")
                         await self.websocket.send(json.dumps({"audio_chunk": audio_b64}))
                         
                         if silence_counter >= SILENCE_INTERVALS_TO_STOP:
-                            # Enough silence - stop streaming and signal end
                             is_streaming = False
                             silence_counter = 0
                             print("  ⏸️  [Processing...]")
-                            logger.info("Speech ended, signaling audio end")
+                            logger.info("Speech ended")
                             await self.websocket.send(json.dumps({"audio_end": True}))
-                    
-                    # If not streaming and no speech, just drop the audio (don't flood Gemini)
                 
                 await asyncio.sleep(AUDIO_SEND_INTERVAL)
                 
@@ -322,33 +328,14 @@ class GeminiLiveClient:
                 await asyncio.sleep(0.1)
 
     async def _send_screen_loop(self):
-        """Periodically send screen captures (demo mode)."""
-        if not ENABLE_SCREEN_CAPTURE:
-            logger.info("Screen capture disabled")
-            return
-            
+        """Periodically send screen captures - DISABLED.
+        
+        Periodic screen captures were causing confusion with the model.
+        Screen context is now sent only when speech starts or via /describe.
+        """
+        # Periodic screen capture disabled - context sent with voice queries instead
         while self.is_running:
-            try:
-                # Wait for Gemini to be ready
-                if not self.gemini_ready:
-                    await asyncio.sleep(0.5)
-                    continue
-                
-                screen_data = self.screen_capture.capture()
-                if screen_data:
-                    screen_b64 = base64.b64encode(screen_data).decode("utf-8")
-                    size_kb = len(screen_data) / 1024
-                    
-                    message = json.dumps({
-                        "screen_frame": screen_b64
-                    })
-                    await self.websocket.send(message)
-                    logger.info(f"Screen captured and sent ({size_kb:.1f} KB)")
-
-                await asyncio.sleep(SCREEN_CAPTURE_INTERVAL)
-            except Exception as e:
-                logger.error(f"Error sending screen: {e}")
-                await asyncio.sleep(SCREEN_CAPTURE_INTERVAL)
+            await asyncio.sleep(10.0)
     
     async def send_screen_now(self):
         """Manually trigger a screen capture (for on-demand use)."""
@@ -443,17 +430,18 @@ class GeminiLiveClient:
     async def _handle_user_input(self):
         """Handle text input from user (for testing without mic)."""
         print("\n" + "=" * 50)
-        print("Gemini Live Assistant Client (Demo Mode)")
+        print("Gemini Live Assistant Client")
         print("=" * 50)
         print("Commands:")
-        print("  [text]   - Send text message to assistant")
-        print("  /screen  - Capture and send screen now (context only)")
-        print("  /describe - Capture screen + ask model to describe it")
-        print("  /quit    - Exit the client")
+        print("  [text]    - Send text message to assistant")
+        print("  /describe - Capture screen + ask model to describe it (RELIABLE)")
+        print("  /quit     - Exit the client")
         print("")
-        print("Demo Settings:")
-        print(f"  Screen capture: {'every ' + str(SCREEN_CAPTURE_INTERVAL) + 's' if ENABLE_SCREEN_CAPTURE else 'DISABLED'}")
-        print(f"  Audio input: {'batched every ' + str(int(AUDIO_SEND_INTERVAL*1000)) + 'ms' if ENABLE_AUDIO_CAPTURE else 'DISABLED'}")
+        print("Features:")
+        print(f"  🎤 Voice: {'ON - streams audio with screen context' if ENABLE_AUDIO_CAPTURE else 'DISABLED'}")
+        print(f"  🖥️  Screen: captured when speech starts")
+        print("")
+        print("Tip: /describe is most reliable for screen questions")
         print("=" * 50 + "\n")
 
         loop = asyncio.get_event_loop()
@@ -475,10 +463,6 @@ class GeminiLiveClient:
                 if user_input.lower() in ("quit", "/quit", "exit"):
                     self.is_running = False
                     break
-                
-                if user_input.lower() == "/screen":
-                    await self.send_screen_now()
-                    continue
 
                 if user_input.lower() == "/describe":
                     await self.describe_screen()
