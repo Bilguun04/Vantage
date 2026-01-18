@@ -3,22 +3,20 @@
 {% block title %}Dashboard - Vantage{% endblock %}
 
 {% block content %}
-<div class="min-h-screen bg-gray-50">
+<div class="min-h-screen bg-gray-900">
     <!-- Header -->
-    <div class="bg-white border-b border-gray-200">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <div class="flex justify-between items-center">
-                <div>
-                    <h1 class="text-4xl font-bold text-gray-900">
-                        Welcome back, <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{{ userinfo.name }}</span>!
-                    </h1>
-                    <p class="text-gray-600 mt-2">Manage and view all your conversations</p>
-                </div>
-                <div>
-                    <a href="#" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300">
-                        + New Conversation
-                    </a>
-                </div>
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="flex justify-between items-center">
+            <div>
+                <h1 class="text-4xl font-bold text-white">
+                    Welcome back, {{ user.name }}!
+                </h1>
+                <p class="text-gray-400 mt-2">Manage and view all your conversations</p>
+            </div>
+            <div>
+                <a href="#" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300">
+                    + New Conversation
+                </a>
             </div>
         </div>
     </div>
@@ -26,18 +24,18 @@
     <!-- Main Content -->
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {% if error %}
-            <div class="mb-8 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <p class="text-red-700 font-semibold">Error loading conversations: {{ error }}</p>
+            <div class="mb-8 p-4 bg-red-900 bg-opacity-30 border border-red-700 rounded-lg">
+                <p class="text-red-300 font-semibold">Error loading conversations: {{ error }}</p>
             </div>
         {% endif %}
 
         {% if conversations %}
             <div class="grid grid-cols-1 gap-6">
                 {% for conversation in conversations %}
-                    <div class="bg-white rounded-lg border border-gray-200 hover:shadow-md transition duration-300 p-6">
+                    <div class="bg-gray-800 rounded-lg border border-gray-700 hover:shadow-md transition duration-300 p-6 hover:border-gray-600">
                         <div class="flex justify-between items-start mb-4">
                             <div class="flex-1">
-                                <a href="{% url 'get_conversation_detail' conversation.id %}" class="text-2xl font-bold text-gray-900 hover:text-blue-600 transition">
+                                <a href="{% url 'get_conversation_detail' conversation.id %}" class="text-2xl font-bold text-white hover:text-blue-400 transition">
                                     {{ conversation.title|default:"Untitled Conversation" }}
                                 </a>
                                 <p class="text-sm text-gray-500 mt-1">
@@ -45,26 +43,26 @@
                                 </p>
                             </div>
                             <div class="flex gap-2">
-                                <button class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition">
+                                <button class="px-4 py-2 text-gray-300 hover:bg-gray-700 rounded-lg transition">
                                     <i class="fas fa-edit"></i> Edit
                                 </button>
-                                <button class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg transition">
+                                <button class="px-4 py-2 text-red-400 hover:bg-red-900 hover:bg-opacity-30 rounded-lg transition">
                                     <i class="fas fa-trash"></i> Delete
                                 </button>
                             </div>
                         </div>
 
-                        <div class="flex gap-8 text-gray-600">
+                        <div class="flex gap-8 text-gray-400">
                             <div class="flex items-center gap-2">
-                                <i class="fas fa-comments text-blue-600"></i>
+                                <i class="fas fa-comments text-blue-400"></i>
                                 <span>{{ conversation.message_count }} messages</span>
                             </div>
                             <div class="flex items-center gap-2">
-                                <i class="fas fa-images text-purple-600"></i>
+                                <i class="fas fa-images text-cyan-400"></i>
                                 <span>{{ conversation.image_count }} images</span>
                             </div>
                             <div class="flex items-center gap-2">
-                                <i class="fas fa-clock text-gray-400"></i>
+                                <i class="fas fa-clock text-gray-500"></i>
                                 <span>Updated: {{ conversation.updated_at|date:"M d, Y H:i" }}</span>
                             </div>
                         </div>
@@ -72,13 +70,13 @@
                 {% endfor %}
             </div>
         {% else %}
-            <div class="bg-white rounded-lg border border-gray-200 p-12 text-center">
+            <div class="bg-gray-800 rounded-lg border border-gray-700 p-12 text-center">
                 <div class="mb-6">
-                    <i class="fas fa-inbox text-6xl text-gray-300"></i>
+                    <i class="fas fa-inbox text-6xl text-gray-600"></i>
                 </div>
-                <h2 class="text-2xl font-bold text-gray-900 mb-2">No conversations yet</h2>
-                <p class="text-gray-600 mb-6">Start a new conversation to begin chatting with the assistant.</p>
-                <a href="#" class="inline-block px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300">
+                <h2 class="text-2xl font-bold text-white mb-2">No conversations yet</h2>
+                <p class="text-gray-400 mb-6">Start a new conversation to begin chatting with the assistant.</p>
+                <a href="#" class="inline-block px-8 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300">
                     Create First Conversation
                 </a>
             </div>
@@ -93,7 +91,7 @@
     
     .card-hover:hover {
         transform: translateY(-2px);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
     }
 </style>
 {% endblock %}

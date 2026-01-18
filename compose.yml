@@ -20,11 +20,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # Django Web Application
-  web:
+  # Daphne ASGI Server
+  daphne:
     build: .
-    container_name: vantage-web
-    command: python manage.py runserver 0.0.0.0:8000
+    container_name: vantage-daphne
+    command: daphne -b 0.0.0.0 -p 8000 app.asgi:application
     volumes:
       - .:/app
     ports:
@@ -32,7 +32,26 @@ services:
     environment:
       - MONGO_URI=mongodb://mongodb:27017/vantage
       - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,web
+      - ALLOWED_HOSTS=localhost,127.0.0.1,daphne,web
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - vantage-network
+
+  # Django Development Server
+  web:
+    build: .
+    container_name: vantage-web
+    command: python manage.py runserver 0.0.0.0:8001
+    volumes:
+      - .:/app
+    ports:
+      - "8001:8001"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/vantage
+      - DEBUG=True
+      - ALLOWED_HOSTS=localhost,127.0.0.1,web,daphne
     depends_on:
       mongodb:
         condition: service_healthy
