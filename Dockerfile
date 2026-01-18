@@ -1,10 +1,8 @@
-# Use official Python runtime as base image
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 # Set environment variables
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 # Set work directory
 WORKDIR /app
@@ -14,14 +12,11 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file
-COPY requirements.txt .
-
 # Install Python dependencies
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project
+# Copy project files
 COPY . .
 
 # Collect static files
@@ -30,5 +25,5 @@ RUN python manage.py collectstatic --noinput || true
 # Expose port
 EXPOSE 8000
 
-# Run Daphne
+# Run with Daphne (ASGI server for WebSocket support)
 CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "app.asgi:application"]

@@ -62,29 +62,19 @@ class ConversationMessage(EmbeddedDocument):
         """Convert message to human-readable dictionary (excludes binary data)"""
         result = {
             'role': self.role,
-            'type': self.message_type,
-            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+            'message_type': self.message_type,
+            'timestamp': self.timestamp.strftime('%H:%M') if self.timestamp else None,
+            'content': self.content or '',
         }
         
-        if self.content:
-            result['content'] = self.content
-        
         if self.message_type == 'audio':
-            result['audio_info'] = {
-                'duration': self.audio_duration_seconds or 'unknown',
-                'size_kb': self.audio_size_kb or 'unknown',
-                'has_data': self.audio_data is not None
-            }
+            result['audio_duration_seconds'] = self.audio_duration_seconds or 'unknown'
+            result['audio_size_kb'] = self.audio_size_kb or 'unknown'
         
         if self.images:
-            result['images'] = [
-                {
-                    'mime_type': img.mime_type,
-                    'size_kb': img.size_kb,
-                    'uploaded_at': img.uploaded_at.isoformat() if img.uploaded_at else None
-                }
-                for img in self.images
-            ]
+            result['image_count'] = len(self.images)
+        else:
+            result['image_count'] = 0
         
         return result
 
@@ -130,17 +120,12 @@ class GeminiConversation(Document):
             'id': str(self.id),
             'session_id': self.session_id,
             'user_id': self.user_id,
-            'title': self.title,
+            'title': self.title or 'Untitled Conversation',
             'model_used': self.model_used,
-            'stats': {
-                'total_messages': self.total_messages,
-                'total_images': self.total_images,
-                'total_audio_chunks': self.total_audio_chunks,
-            },
-            'timestamps': {
-                'created_at': self.created_at.isoformat() if self.created_at else None,
-                'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-                'last_activity': self.last_activity.isoformat() if self.last_activity else None,
-            },
+            'message_count': self.total_messages or '0',
+            'image_count': self.total_images or '0',
+            'audio_count': self.total_audio_chunks or '0',
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M') if self.created_at else None,
+            'updated_at': self.updated_at.strftime('%Y-%m-%d %H:%M') if self.updated_at else None,
             'messages': [msg.to_readable_dict() for msg in self.messages]
         }

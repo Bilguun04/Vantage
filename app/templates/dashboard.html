@@ -225,15 +225,6 @@
 {% endif %}
 
 <script>
-    // Calculate total messages
-    document.addEventListener('DOMContentLoaded', function() {
-        let total = 0;
-        {% for conv in conversations %}
-            total += {{ conv.message_count|default:0 }};
-        {% endfor %}
-        document.getElementById('total-messages').textContent = total;
-    });
-
     // Toggle conversation expansion
     function toggleConversation(id) {
         const element = document.getElementById(id);
@@ -256,9 +247,10 @@
     }
 
     // Load conversation messages
+    // Load conversation messages (for preview - uses JSON API)
     async function loadMessages(conversationId, container) {
         try {
-            const response = await fetch(`/assistant/conversations/${conversationId}/?skip_auth=true`);
+            const response = await fetch(`/assistant/conversations/${conversationId}/?skip_auth=true&api=true`);
             const data = await response.json();
             
             if (data.success && data.conversation.messages) {

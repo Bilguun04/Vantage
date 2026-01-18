@@ -92,7 +92,7 @@ WSGI_APPLICATION = 'app.wsgi.application'
 
 MONGO_URI = os.environ.get(
     'MONGO_URI',
-    'mongodb://mongodb:27017/vantage'
+    'mongodb://localhost:27017/vantage'
 )
 
 DATABASES = {

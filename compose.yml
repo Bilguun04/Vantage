@@ -1,6 +1,29 @@
 name: 'Vantage'
 
 services:
+  # Django App (Backend + Frontend)
+  web:
+    build: .
+    container_name: vantage-web
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017/vantage
+      - DEBUG=True
+      - AUTH0_DOMAIN=${AUTH0_DOMAIN}
+      - AUTH0_CLIENT_ID=${AUTH0_CLIENT_ID}
+      - AUTH0_CLIENT_SECRET=${AUTH0_CLIENT_SECRET}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - .:/app
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - vantage-network
+    restart: unless-stopped
+
+
   # MongoDB Service
   mongodb:
     image: mongo:7.0
@@ -8,7 +31,7 @@ services:
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_DATABASE: Vantage
+      MONGO_INITDB_DATABASE: vantage
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
@@ -19,46 +42,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # Daphne ASGI Server
-  daphne:
-    build: .
-    container_name: vantage-daphne
-    command: daphne -b 0.0.0.0 -p 8000 app.asgi:application
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-    environment:
-      - MONGO_URI=mongodb://mongodb:27017/vantage
-      - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,daphne,web
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    networks:
-      - vantage-network
-
-  # Django Development Server
-  web:
-    build: .
-    container_name: vantage-web
-    command: python manage.py runserver 0.0.0.0:8001
-    volumes:
-      - .:/app
-    ports:
-      - "8001:8001"
-    environment:
-      - MONGO_URI=mongodb://mongodb:27017/vantage
-      - DEBUG=True
-      - ALLOWED_HOSTS=localhost,127.0.0.1,web,daphne
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    networks:
-      - vantage-network
-
-  # Optional: MongoDB Express (Web UI for MongoDB)
+      
+ # Optional: MongoDB Express (Web UI for MongoDB)
   mongo-express:
     image: mongo-express:latest
     container_name: vantage-mongo-express

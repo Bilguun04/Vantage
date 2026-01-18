@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block title %}{{ conversation.title }} - Vantage{% endblock %}
+
+{% block extra_css %}
+<style>
+    .message-bubble {
+        animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .user-message {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(37, 99, 235, 0.2) 100%);
+        border-left: 4px solid #3b82f6;
+    }
+
+    .assistant-message {
+        background: linear-gradient(135deg, rgba(6, 182, 212, 0.1) 0%, rgba(20, 184, 166, 0.1) 100%);
+        border-left: 4px solid #06b6d4;
+    }
+
+    .system-message {
+        background: rgba(234, 179, 8, 0.1);
+        border-left: 4px solid #eab308;
+    }
+
+    .thought-message {
+        background: rgba(147, 51, 234, 0.1);
+        border-left: 4px solid #9333ea;
+        font-style: italic;
+    }
+
+    .audio-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: rgba(99, 102, 241, 0.2);
+        border-radius: 20px;
+        color: #a5b4fc;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<section class="mb-8">
+    <div class="flex items-center gap-4 mb-6">
+        <a href="/assistant/conversations" class="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition">
+            <i class="fas fa-arrow-left text-xl"></i>
+        </a>
+        <div>
+            <h1 class="text-3xl font-bold text-white">{{ conversation.title|default:"Conversation" }}</h1>
+            <p class="text-gray-400 text-sm mt-1">
+                <i class="fas fa-calendar-alt mr-2"></i>{{ conversation.created_at }}
+                <span class="mx-3">•</span>
+                <i class="fas fa-comments mr-2"></i>{{ conversation.message_count|default:0 }} messages
+                <span class="mx-3">•</span>
+                <i class="fas fa-images mr-2"></i>{{ conversation.image_count|default:0 }} images
+            </p>
+        </div>
+    </div>
+</section>
+
+{% if error %}
+<div class="mb-8 p-4 bg-red-900 bg-opacity-30 border border-red-500 rounded-xl">
+    <p class="text-red-300">{{ error }}</p>
+</div>
+{% endif %}
+
+<!-- Messages -->
+<section class="space-y-4 max-w-4xl mx-auto">
+    {% for message in conversation.messages %}
+        {% if message.role == 'user' %}
+            <!-- User Message -->
+            <div class="message-bubble user-message rounded-xl p-4">
+                <div class="flex items-start gap-4">
+                    <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-user text-white"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="font-semibold text-blue-400">You</span>
+                            {% if message.message_type and message.message_type != 'text' %}
+                                <span class="text-xs px-2 py-0.5 bg-blue-900 rounded-full text-blue-300">{{ message.message_type }}</span>
+                            {% endif %}
+                            {% if message.timestamp %}
+                                <span class="text-gray-500 text-xs ml-auto">{{ message.timestamp }}</span>
+                            {% endif %}
+                        </div>
+                        
+                        {% if message.message_type == 'audio' %}
+                            <div class="audio-indicator">
+                                <i class="fas fa-microphone"></i>
+                                <span>Voice message{% if message.audio_duration_seconds %} ({{ message.audio_duration_seconds }}s){% endif %}</span>
+                            </div>
+                        {% elif message.content %}
+                            <p class="text-gray-200 whitespace-pre-wrap">{{ message.content }}</p>
+                        {% else %}
+                            <p class="text-gray-500 italic">No text content</p>
+                        {% endif %}
+                        
+                        {% if message.image_count and message.image_count > 0 %}
+                            <div class="mt-2 flex items-center gap-2 text-cyan-400 text-sm">
+                                <i class="fas fa-image"></i>
+                                <span>{{ message.image_count }} screenshot(s) attached</span>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+        {% elif message.role == 'assistant' %}
+            <!-- Assistant Message -->
+            <div class="message-bubble {% if message.message_type == 'thought' %}thought-message{% else %}assistant-message{% endif %} rounded-xl p-4">
+                <div class="flex items-start gap-4">
+                    <div class="w-10 h-10 {% if message.message_type == 'thought' %}bg-purple-500{% else %}bg-cyan-500{% endif %} rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="fas {% if message.message_type == 'thought' %}fa-brain{% else %}fa-robot{% endif %} text-white"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="font-semibold {% if message.message_type == 'thought' %}text-purple-400{% else %}text-cyan-400{% endif %}">
+                                {% if message.message_type == 'thought' %}Gemini (thinking){% else %}Gemini{% endif %}
+                            </span>
+                            {% if message.message_type == 'audio' %}
+                                <span class="text-xs px-2 py-0.5 bg-cyan-900 rounded-full text-cyan-300">audio response</span>
+                            {% endif %}
+                            {% if message.timestamp %}
+                                <span class="text-gray-500 text-xs ml-auto">{{ message.timestamp }}</span>
+                            {% endif %}
+                        </div>
+                        
+                        {% if message.message_type == 'audio' %}
+                            <div class="audio-indicator">
+                                <i class="fas fa-volume-up"></i>
+                                <span>Audio response{% if message.audio_duration_seconds %} ({{ message.audio_duration_seconds }}s{% if message.audio_size_kb %}, {{ message.audio_size_kb }} KB{% endif %}){% endif %}</span>
+                            </div>
+                            {% if message.content %}
+                                <p class="text-gray-400 text-sm mt-2">{{ message.content }}</p>
+                            {% endif %}
+                        {% elif message.content %}
+                            <p class="text-gray-200 whitespace-pre-wrap">{{ message.content }}</p>
+                        {% else %}
+                            <p class="text-gray-500 italic">No text content</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+        {% elif message.role == 'system' %}
+            <!-- System Message -->
+            <div class="message-bubble system-message rounded-xl p-4">
+                <div class="flex items-start gap-4">
+                    <div class="w-10 h-10 bg-yellow-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <i class="fas fa-info-circle text-white"></i>
+                    </div>
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="font-semibold text-yellow-400">System</span>
+                            {% if message.timestamp %}
+                                <span class="text-gray-500 text-xs ml-auto">{{ message.timestamp }}</span>
+                            {% endif %}
+                        </div>
+                        <p class="text-gray-300">{{ message.content }}</p>
+                    </div>
+                </div>
+            </div>
+        {% endif %}
+    {% empty %}
+        <div class="text-center py-16">
+            <div class="w-20 h-20 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-comments text-4xl text-gray-500"></i>
+            </div>
+            <p class="text-gray-400 text-lg">No messages in this conversation yet.</p>
+        </div>
+    {% endfor %}
+</section>
+
+<!-- Back to Dashboard Button -->
+<section class="mt-12 text-center pb-8">
+    <a href="/assistant/conversations" class="inline-flex items-center gap-2 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition">
+        <i class="fas fa-arrow-left"></i>
+        Back to Dashboard
+    </a>
+</section>
+{% endblock %}

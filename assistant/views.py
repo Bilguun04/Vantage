@@ -84,50 +84,70 @@ def get_conversations(request):
             },
             'userinfo': {}
         })
-
 @require_http_methods(["GET"])
 def get_conversation_detail(request, conversation_id):
     """
     Get detailed information about a specific conversation including all messages.
-    Returns human-readable format (no binary data).
+    Returns HTML page for human-readable view, or JSON if api=true.
     
     URL parameters:
         conversation_id: MongoDB ObjectId of the conversation
     
     Query parameters:
         skip_auth: If 'true', skip ownership check (for demo mode)
+        api: If 'true', returns JSON instead of HTML
     """
     try:
         conversation = ConversationService.get_conversation_by_id(conversation_id)
         
         if not conversation:
-            return JsonResponse({
-                "success": False,
-                "error": "Conversation not found"
-            }, status=404)
+            if request.GET.get('api') == 'true':
+                return JsonResponse({
+                    "success": False,
+                    "error": "Conversation not found"
+                }, status=404)
+            return render(request, 'conversation_detail.html', {
+                'error': 'Conversation not found'
+            })
         
         # Skip auth check in demo mode
         skip_auth = request.GET.get('skip_auth') == 'true'
         if not skip_auth:
             user_id = request.session.get('userinfo', {}).get('sub', 'anonymous')
             if conversation.user_id != user_id and user_id != 'anonymous':
-                return JsonResponse({
-                    "success": False,
-                    "error": "Unauthorized"
-                }, status=403)
+                if request.GET.get('api') == 'true':
+                    return JsonResponse({
+                        "success": False,
+                        "error": "Unauthorized"
+                    }, status=403)
+                return render(request, 'conversation_detail.html', {
+                    'error': 'Unauthorized'
+                })
         
-        # Use the new to_readable_dict method for clean output
-        return JsonResponse({
-            "success": True,
-            "conversation": conversation.to_readable_dict()
+        # Get readable dict for the conversation
+        conv_data = conversation.to_readable_dict()
+        
+        # Return JSON if api parameter is set
+        if request.GET.get('api') == 'true':
+            return JsonResponse({
+                "success": True,
+                "conversation": conv_data
+            })
+        
+        # Return HTML page
+        return render(request, 'conversation_detail.html', {
+            'conversation': conv_data
         })
     except Exception as e:
         logger.error(f"Error fetching conversation detail: {e}")
-        return JsonResponse({
-            "success": False,
-            "error": str(e)
-        }, status=500)
-
+        if request.GET.get('api') == 'true':
+            return JsonResponse({
+                "success": False,
+                "error": str(e)
+            }, status=500)
+        return render(request, 'conversation_detail.html', {
+            'error': str(e)
+        })
 
 @require_http_methods(["GET"])
 def get_readable_conversations(request):
