@@ -223,17 +223,29 @@ class AudioPlayback:
 
 
 class ScreenCapture:
-    """Handles screen capture."""
+    """Handles screen capture with thread-safe mss instance."""
 
     def __init__(self):
-        self.sct = mss.mss()
+        self.sct = None  # Created lazily per-thread
+        self._lock = threading.Lock()
+
+    def _get_sct(self):
+        """Get or create mss instance (thread-safe)."""
+        # mss stores device contexts in thread-local storage,
+        # so we need to create a new instance per thread if needed
+        if self.sct is None:
+            with self._lock:
+                if self.sct is None:
+                    self.sct = mss.mss()
+        return self.sct
 
     def capture(self) -> bytes:
         """Capture the screen and return as JPEG bytes."""
         try:
+            sct = self._get_sct()
             # Capture the primary monitor
-            monitor = self.sct.monitors[1]  # Primary monitor
-            screenshot = self.sct.grab(monitor)
+            monitor = sct.monitors[1]  # Primary monitor
+            screenshot = sct.grab(monitor)
 
             # Convert to PIL Image
             img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")

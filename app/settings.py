@@ -12,11 +12,14 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 import os
 from pathlib import Path
+import os
+from dotenv import load_dotenv, find_dotenv
 
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+TEMPLATE_DIR = os.path.join(BASE_DIR, "app", "templates")
 
 # Load environment variables from .env file
 load_dotenv(BASE_DIR / '.env')
@@ -68,7 +71,7 @@ ROOT_URLCONF = 'app.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [TEMPLATE_DIR],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -85,6 +88,12 @@ WSGI_APPLICATION = 'app.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+# MongoDB Configuration
+
+MONGO_URI = os.environ.get(
+    'MONGO_URI',
+    'mongodb://localhost:27017/vantage'
+)
 
 DATABASES = {
     'default': {
@@ -93,6 +102,17 @@ DATABASES = {
     }
 }
 
+# Import mongoengine
+try:
+    import mongoengine as me
+    me.connect(
+        db='vantage',
+        host=MONGO_URI,
+        tz_aware=True,
+        connect=False
+    )
+except ImportError:
+    pass
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -130,6 +150,14 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+ENV_FILE = find_dotenv()
+if ENV_FILE:
+    load_dotenv(ENV_FILE)
+
+# Load Auth0 application settings into memory
+AUTH0_DOMAIN = os.environ.get("AUTH0_DOMAIN")
+AUTH0_CLIENT_ID = os.environ.get("AUTH0_CLIENT_ID")
+AUTH0_CLIENT_SECRET = os.environ.get("AUTH0_CLIENT_SECRET")
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
