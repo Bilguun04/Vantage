@@ -1,16 +1,137 @@
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Auth0 Example</title>
-</head>
-<body>
-{% if session %}
-  <h1>Welcome {{session.userinfo.name}}!</h1>
-  <p><a href="{% url 'logout' %}">Logout</a></p>
-  <div><pre>{{pretty}}</pre></div>
-{% else %}
-  <h1>Welcome Guest</h1>
-  <p><a href="{% url 'login' %}">Login</a></p>
-{% endif %}
-</body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}Home - Vantage{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="mb-20">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+        <!-- Hero Text -->
+        <div class="space-y-6">
+            {% if session %}
+                <h1 class="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
+                    Welcome back, <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">{{ session.userinfo.name }}</span>!
+                </h1>
+                <p class="text-xl text-gray-600 leading-relaxed">
+                    You're all set! Explore your dashboard and manage your account with ease.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4 pt-4">
+                    <a href="{% url 'get_conversations' %}" class="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300 text-center">
+                        Go to Dashboard
+                    </a>
+                    <a href="{% url 'logout' %}" class="px-8 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:border-gray-400 hover:bg-gray-50 transition duration-300 text-center">
+                        Logout
+                    </a>
+                </div>
+            {% else %}
+                <h1 class="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
+                    Welcome to <span class="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">Vantage</span>
+                </h1>
+                <p class="text-xl text-gray-600 leading-relaxed">
+                    Experience the power of modern web technology. Sign in to access exclusive features and unlock your potential.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4 pt-4">
+                    <a href="{% url 'login' %}" class="px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300 text-center">
+                        Sign In
+                    </a>
+                    <a href="#features" class="px-8 py-3 border-2 border-gray-300 text-gray-700 rounded-lg font-semibold hover:border-gray-400 hover:bg-gray-50 transition duration-300 text-center">
+                        Learn More
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+        
+        <!-- Hero Illustration -->
+        <div class="relative">
+            <div class="gradient-bg rounded-2xl p-12 text-white flex items-center justify-center min-h-96">
+                <div class="text-center">
+                    <i class="fas fa-rocket text-7xl mb-6 opacity-80"></i>
+                    <p class="text-lg font-semibold">Your journey starts here</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features Section -->
+<section id="features" class="mb-20">
+    <div class="text-center mb-12">
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Why Choose Vantage?</h2>
+        <p class="text-xl text-gray-600">Packed with features to help you succeed</p>
+    </div>
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <!-- Feature 1 -->
+        <div class="card-hover bg-white rounded-xl p-8 border border-gray-100">
+            <div class="w-14 h-14 bg-gradient-to-r from-blue-100 to-purple-100 rounded-lg flex items-center justify-center mb-4">
+                <i class="fas fa-bolt text-2xl text-blue-600"></i>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Lightning Fast</h3>
+            <p class="text-gray-600 leading-relaxed">
+                Built on modern technology with optimized performance for the best user experience.
+            </p>
+        </div>
+        
+        <!-- Feature 2 -->
+        <div class="card-hover bg-white rounded-xl p-8 border border-gray-100">
+            <div class="w-14 h-14 bg-gradient-to-r from-green-100 to-emerald-100 rounded-lg flex items-center justify-center mb-4">
+                <i class="fas fa-shield-alt text-2xl text-green-600"></i>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Secure & Reliable</h3>
+            <p class="text-gray-600 leading-relaxed">
+                Enterprise-grade security with encrypted data and regular backups for peace of mind.
+            </p>
+        </div>
+        
+        <!-- Feature 3 -->
+        <div class="card-hover bg-white rounded-xl p-8 border border-gray-100">
+            <div class="w-14 h-14 bg-gradient-to-r from-pink-100 to-rose-100 rounded-lg flex items-center justify-center mb-4">
+                <i class="fas fa-users text-2xl text-pink-600"></i>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">Easy Collaboration</h3>
+            <p class="text-gray-600 leading-relaxed">
+                Collaborate seamlessly with your team in real-time with intuitive tools.
+            </p>
+        </div>
+    </div>
+</section>
+
+<!-- Stats Section -->
+<section class="mb-20 gradient-bg text-white rounded-2xl p-12">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-8 text-center">
+        <div>
+            <div class="text-5xl font-bold mb-2">10K+</div>
+            <p class="text-purple-100">Active Users</p>
+        </div>
+        <div>
+            <div class="text-5xl font-bold mb-2">99.9%</div>
+            <p class="text-purple-100">Uptime</p>
+        </div>
+        <div>
+            <div class="text-5xl font-bold mb-2">24/7</div>
+            <p class="text-purple-100">Support</p>
+        </div>
+        <div>
+            <div class="text-5xl font-bold mb-2">150+</div>
+            <p class="text-purple-100">Countries</p>
+        </div>
+    </div>
+</section>
+
+<!-- CTA Section -->
+<section class="text-center">
+    <div class="bg-white rounded-2xl p-12 border-2 border-gray-100">
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Ready to get started?</h2>
+        <p class="text-xl text-gray-600 mb-8">Join thousands of users already using Vantage</p>
+        {% if not session %}
+            <a href="{% url 'login' %}" class="inline-block px-10 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-bold text-lg hover:shadow-lg transform hover:scale-105 transition duration-300">
+                Sign Up Now
+            </a>
+        {% else %}
+            <a href="#" class="inline-block px-10 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-bold text-lg hover:shadow-lg transform hover:scale-105 transition duration-300">
+                Explore Features
+            </a>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

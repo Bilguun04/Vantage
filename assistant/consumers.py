@@ -11,9 +11,12 @@ import base64
 import json
 import logging
 import os
+import uuid
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 from google import genai
+from app.models import GeminiConversation, ConversationMessage, ConversationImage
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
     - Bidirectional audio/video streaming with Gemini
     - Google Search tool integration (auto mode)
     - Base64 encoded data transfer with client
+    - Saving conversation history to MongoDB
     """
 
     def __init__(self, *args, **kwargs):
@@ -41,6 +45,12 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         self.response_listener_task = None
         self.is_connected = False
         self.gemini_ready = False  # True only when Gemini session is active
+        
+        # MongoDB conversation tracking
+        self.conversation = None
+        self.user_id = None
+        self.session_id = str(uuid.uuid4())  # Unique identifier for this session
+        self.current_turn_images = []  # Track images in current turn
 
     async def connect(self):
         """
@@ -50,6 +60,25 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         await self.accept()
         self.is_connected = True
         logger.info("WebSocket connection accepted")
+
+        # Extract user info from scope
+        try:
+            self.user_id = self.scope.get('user', {}).get('id') or 'anonymous'
+        except:
+            self.user_id = 'anonymous'
+
+        # Initialize MongoDB conversation document
+        try:
+            self.conversation = GeminiConversation(
+                user_id=self.user_id,
+                session_id=self.session_id,
+                title=f"Gemini Chat - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+                system_instruction=SYSTEM_INSTRUCTION
+            )
+            self.conversation.save()
+            logger.info(f"Created conversation document: {self.conversation.id}")
+        except Exception as e:
+            logger.error(f"Error creating conversation document: {e}")
 
         api_key = os.environ.get("GOOGLE_API_KEY")
         if not api_key:
@@ -202,17 +231,19 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         # Handle screen + text (like /describe command) - THIS WORKS RELIABLY
         elif has_screen and has_text:
             image_bytes = base64.b64decode(data["screen_frame"])
+            # Save image to current turn
+            await self._save_image_to_db(image_bytes, mime_type="image/jpeg")
             await self._send_image_to_gemini(image_bytes, with_prompt=data["text"])
         
         # Handle screen only
         elif has_screen:
             image_bytes = base64.b64decode(data["screen_frame"])
+            await self._save_image_to_db(image_bytes, mime_type="image/jpeg")
             await self._send_image_to_gemini(
                 image_bytes, 
                 with_prompt="[Current screen context - acknowledge briefly]"
             )
-        
-        # Handle text only
+
         elif has_text:
             await self._send_text_to_gemini(data["text"])
         
@@ -279,6 +310,7 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         Args:
             image_bytes: The image data
             with_prompt: Optional text prompt to send with the image
+        Send image/screenshot data to Gemini Live session and save to MongoDB.
         """
         try:
             # Detect image type (default to JPEG for screenshots)
@@ -311,10 +343,14 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
 
     async def _send_text_to_gemini(self, text: str):
         """
-        Send text message to Gemini Live session.
+        Send text message to Gemini Live session and save to MongoDB.
         """
         try:
             logger.info(f"Sending text to Gemini: '{text[:50]}...'")
+            
+            # Save user message to MongoDB
+            await self._save_message_to_db("user", "text", text)
+            
             await self.session.send_client_content(
                 turns=[{"role": "user", "parts": [{"text": text}]}],
                 turn_complete=True
@@ -406,6 +442,9 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                             if part.inline_data.mime_type and part.inline_data.mime_type.startswith("audio/"):
                                 audio_size = len(part.inline_data.data) if part.inline_data.data else 0
                                 if audio_size > 0:
+                                    # Save audio response to MongoDB
+                                    await self._save_message_to_db("assistant", "audio", audio_data=part.inline_data.data)
+                                    
                                     audio_b64 = base64.b64encode(part.inline_data.data).decode("utf-8")
                                     await self.send(text_data=json.dumps({
                                         "type": "audio_response",
@@ -419,8 +458,12 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                             is_thought = getattr(part, 'thought', False) is True
                             if is_thought:
                                 logger.info(f"Model thought: {part.text[:100]}...")
+                                # Save thought to MongoDB
+                                await self._save_message_to_db("assistant", "thought", content=part.text)
                             else:
                                 logger.info(f"Model text: {part.text[:100]}...")
+                                # Save text response to MongoDB
+                                await self._save_message_to_db("assistant", "text", content=part.text)
                             await self.send(text_data=json.dumps({
                                 "type": "text_response",
                                 "text": part.text
@@ -443,6 +486,73 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
 
         except Exception as e:
             logger.error(f"Error handling Gemini response: {e}", exc_info=True)
+
+    async def _save_message_to_db(self, role: str, message_type: str, content: str = None, audio_data: bytes = None):
+        """
+        Save a message to MongoDB conversation history.
+        
+        Args:
+            role: 'user' or 'assistant'
+            message_type: 'text', 'audio', 'image', or 'thought'
+            content: Text content of the message
+            audio_data: Binary audio data if message_type is 'audio'
+        """
+        try:
+            if not self.conversation:
+                logger.warning("No conversation document initialized")
+                return
+            
+            message = ConversationMessage(
+                role=role,
+                message_type=message_type,
+                content=content,
+                audio_data=audio_data,
+                images=self.current_turn_images if role == "user" else []
+            )
+            
+            # Add message to conversation
+            self.conversation.messages.append(message)
+            
+            # Update metadata
+            if message_type == 'image':
+                self.conversation.total_images = str(int(self.conversation.total_images or 0) + 1)
+            elif message_type == 'audio':
+                self.conversation.total_audio_chunks = str(int(self.conversation.total_audio_chunks or 0) + 1)
+            
+            self.conversation.total_messages = str(int(self.conversation.total_messages or 0) + 1)
+            self.conversation.last_activity = datetime.utcnow()
+            
+            # Save to database
+            self.conversation.save()
+            logger.debug(f"Saved {message_type} message from {role} to MongoDB")
+            
+            # Clear images for next turn
+            if role == "assistant":
+                self.current_turn_images = []
+                
+        except Exception as e:
+            logger.error(f"Error saving message to MongoDB: {e}")
+
+    async def _save_image_to_db(self, image_bytes: bytes, mime_type: str):
+        """
+        Save an image to the current conversation turn.
+        """
+        try:
+            size_kb = f"{len(image_bytes) / 1024:.2f}"
+            
+            image = ConversationImage(
+                data=image_bytes,
+                mime_type=mime_type,
+                size_kb=size_kb
+            )
+            
+            # Add image to current turn's image list
+            self.current_turn_images.append(image)
+            
+            logger.debug(f"Buffered image ({size_kb} KB) for current turn")
+            
+        except Exception as e:
+            logger.error(f"Error processing image for MongoDB: {e}")
 
     async def send_error(self, message: str):
         """
