@@ -17,16 +17,27 @@ logger = logging.getLogger(__name__)
 def get_conversations(request):
     """
     Display all conversations for the current user in dashboard.
+    Also displays seed data if user is not authenticated (for demo purposes).
     
     Query parameters:
         limit: Number of conversations to return (default: 10)
         api: If 'true', returns JSON instead of HTML
     """
     try:
-        user_id = request.session.get('userinfo', {}).get('sub', 'anonymous')
+        # Get user info from session
+        userinfo = request.session.get('userinfo', {})
+        user_id = userinfo.get('sub', None)
+        user_name = userinfo.get('name', 'Guest')
         limit = int(request.GET.get('limit', 10))
         
-        conversations = ConversationService.get_user_conversations(user_id, limit)
+        # Fetch conversations
+        if user_id:
+            # Authenticated user - fetch their conversations
+            conversations = ConversationService.get_user_conversations(user_id, limit)
+        else:
+            # Not authenticated - show all conversations (demo mode)
+            from app.models import GeminiConversation
+            conversations = list(GeminiConversation.objects.order_by('-created_at').limit(limit))
         
         data = []
         for conv in conversations:
@@ -51,7 +62,11 @@ def get_conversations(request):
         # Return HTML dashboard
         return render(request, 'dashboard.html', {
             'conversations': data,
-            'userinfo': request.session.get('userinfo', {})
+            'user': {
+                'name': user_name,
+                'email': userinfo.get('email', 'demo@example.com')
+            },
+            'userinfo': userinfo
         })
     except Exception as e:
         logger.error(f"Error fetching conversations: {e}")
@@ -63,17 +78,24 @@ def get_conversations(request):
         return render(request, 'dashboard.html', {
             'conversations': [],
             'error': str(e),
-            'userinfo': request.session.get('userinfo', {})
+            'user': {
+                'name': 'Guest',
+                'email': 'demo@example.com'
+            },
+            'userinfo': {}
         })
-
 
 @require_http_methods(["GET"])
 def get_conversation_detail(request, conversation_id):
     """
     Get detailed information about a specific conversation including all messages.
+    Returns human-readable format (no binary data).
     
     URL parameters:
         conversation_id: MongoDB ObjectId of the conversation
+    
+    Query parameters:
+        skip_auth: If 'true', skip ownership check (for demo mode)
     """
     try:
         conversation = ConversationService.get_conversation_by_id(conversation_id)
@@ -84,62 +106,56 @@ def get_conversation_detail(request, conversation_id):
                 "error": "Conversation not found"
             }, status=404)
         
-        # Verify user owns this conversation
-        user_id = request.session.get('userinfo', {}).get('sub', 'anonymous')
-        if conversation.user_id != user_id:
-            return JsonResponse({
-                "success": False,
-                "error": "Unauthorized"
-            }, status=403)
+        # Skip auth check in demo mode
+        skip_auth = request.GET.get('skip_auth') == 'true'
+        if not skip_auth:
+            user_id = request.session.get('userinfo', {}).get('sub', 'anonymous')
+            if conversation.user_id != user_id and user_id != 'anonymous':
+                return JsonResponse({
+                    "success": False,
+                    "error": "Unauthorized"
+                }, status=403)
         
-        # Build detailed response
-        messages = []
-        for msg in conversation.messages:
-            msg_data = {
-                "role": msg.role,
-                "type": msg.message_type,
-                "timestamp": msg.timestamp.isoformat(),
-            }
-            
-            if msg.content:
-                msg_data["content"] = msg.content
-            
-            # Include image information (without the binary data)
-            if msg.images:
-                msg_data["images"] = [
-                    {
-                        "mime_type": img.mime_type,
-                        "size_kb": img.size_kb,
-                        "uploaded_at": img.uploaded_at.isoformat()
-                    }
-                    for img in msg.images
-                ]
-            
-            # Include audio info without binary data
-            if msg.audio_data:
-                msg_data["audio_size_bytes"] = len(msg.audio_data)
-            
-            messages.append(msg_data)
-        
+        # Use the new to_readable_dict method for clean output
         return JsonResponse({
             "success": True,
-            "conversation": {
-                "id": str(conversation.id),
-                "session_id": conversation.session_id,
-                "title": conversation.title,
-                "created_at": conversation.created_at.isoformat(),
-                "updated_at": conversation.updated_at.isoformat(),
-                "model_used": conversation.model_used,
-                "stats": {
-                    "total_messages": int(conversation.total_messages or 0),
-                    "total_images": int(conversation.total_images or 0),
-                    "total_audio_chunks": int(conversation.total_audio_chunks or 0),
-                },
-                "messages": messages
-            }
+            "conversation": conversation.to_readable_dict()
         })
     except Exception as e:
         logger.error(f"Error fetching conversation detail: {e}")
+        return JsonResponse({
+            "success": False,
+            "error": str(e)
+        }, status=500)
+
+
+@require_http_methods(["GET"])
+def get_readable_conversations(request):
+    """
+    Get all conversations in a human-readable JSON format.
+    Excludes binary data (audio, images) and shows metadata instead.
+    
+    Query parameters:
+        limit: Number of conversations to return (default: 10)
+    """
+    try:
+        from app.models import GeminiConversation
+        
+        limit = int(request.GET.get('limit', 10))
+        conversations = list(GeminiConversation.objects.order_by('-created_at').limit(limit))
+        
+        readable_conversations = []
+        for conv in conversations:
+            readable_conversations.append(conv.to_readable_dict())
+        
+        return JsonResponse({
+            "success": True,
+            "count": len(readable_conversations),
+            "conversations": readable_conversations
+        }, json_dumps_params={'indent': 2})
+        
+    except Exception as e:
+        logger.error(f"Error fetching readable conversations: {e}")
         return JsonResponse({
             "success": False,
             "error": str(e)

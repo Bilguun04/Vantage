@@ -2,96 +2,320 @@
 
 {% block title %}Dashboard - Vantage{% endblock %}
 
+{% block extra_css %}
+<style>
+    .conversation-card {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .conversation-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+    }
+
+    .message-bubble {
+        animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .stat-badge {
+        backdrop-filter: blur(10px);
+    }
+
+    .audio-wave {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+    }
+
+    .audio-wave span {
+        display: inline-block;
+        width: 3px;
+        background: linear-gradient(to top, #3b82f6, #06b6d4);
+        border-radius: 2px;
+        animation: wave 1s ease-in-out infinite;
+    }
+
+    .audio-wave span:nth-child(2) { animation-delay: 0.1s; }
+    .audio-wave span:nth-child(3) { animation-delay: 0.2s; }
+    .audio-wave span:nth-child(4) { animation-delay: 0.3s; }
+    .audio-wave span:nth-child(5) { animation-delay: 0.4s; }
+
+    @keyframes wave {
+        0%, 100% { height: 8px; }
+        50% { height: 16px; }
+    }
+
+    .expand-btn:hover .expand-icon {
+        transform: rotate(180deg);
+    }
+
+    .expand-icon {
+        transition: transform 0.3s ease;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="min-h-screen bg-gray-900">
-    <!-- Header -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div class="flex justify-between items-center">
-            <div>
-                <h1 class="text-4xl font-bold text-white">
-                    Welcome back, {{ user.name }}!
-                </h1>
-                <p class="text-gray-400 mt-2">Manage and view all your conversations</p>
+<!-- Hero Header -->
+<section class="mb-12">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+        <!-- Welcome Card -->
+        <div class="lg:col-span-2 space-y-4">
+            <h1 class="text-5xl font-bold text-white leading-tight">
+                Welcome back, <span class="bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">{{ user.name|default:"Guest" }}</span>!
+            </h1>
+            <p class="text-xl text-gray-400 leading-relaxed">
+                Here are your AI conversation sessions. Click on any conversation to view details.
+            </p>
+        </div>
+        
+        <!-- Quick Stats Card -->
+        <div class="gradient-bg rounded-2xl p-6 text-white">
+            <div class="flex items-center gap-4 mb-4">
+                <div class="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center">
+                    <i class="fas fa-chart-line text-2xl"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-lg">Quick Stats</h3>
+                    <p class="text-blue-200 text-sm">Your activity overview</p>
+                </div>
             </div>
-            <div>
-                <a href="#" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300">
-                    + New Conversation
-                </a>
+            <div class="grid grid-cols-2 gap-4 mt-4">
+                <div class="bg-white bg-opacity-10 rounded-lg p-3 text-center">
+                    <div class="text-3xl font-bold">{{ conversations|length }}</div>
+                    <p class="text-blue-200 text-sm">Conversations</p>
+                </div>
+                <div class="bg-white bg-opacity-10 rounded-lg p-3 text-center">
+                    <div class="text-3xl font-bold" id="total-messages">0</div>
+                    <p class="text-blue-200 text-sm">Messages</p>
+                </div>
             </div>
         </div>
     </div>
+</section>
 
-    <!-- Main Content -->
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {% if error %}
-            <div class="mb-8 p-4 bg-red-900 bg-opacity-30 border border-red-700 rounded-lg">
-                <p class="text-red-300 font-semibold">Error loading conversations: {{ error }}</p>
-            </div>
-        {% endif %}
+<!-- Action Bar -->
+<section class="mb-8">
+    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div class="flex gap-4">
+            <button class="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-700 transition flex items-center gap-2">
+                <i class="fas fa-filter"></i> Filter
+            </button>
+            <button class="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-300 rounded-lg hover:bg-gray-700 transition flex items-center gap-2">
+                <i class="fas fa-sort"></i> Sort by Date
+            </button>
+        </div>
+        <a href="/" class="px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300 flex items-center gap-2">
+            <i class="fas fa-plus"></i> New Conversation
+        </a>
+    </div>
+</section>
 
-        {% if conversations %}
-            <div class="grid grid-cols-1 gap-6">
-                {% for conversation in conversations %}
-                    <div class="bg-gray-800 rounded-lg border border-gray-700 hover:shadow-md transition duration-300 p-6 hover:border-gray-600">
-                        <div class="flex justify-between items-start mb-4">
-                            <div class="flex-1">
-                                <a href="{% url 'get_conversation_detail' conversation.id %}" class="text-2xl font-bold text-white hover:text-blue-400 transition">
-                                    {{ conversation.title|default:"Untitled Conversation" }}
-                                </a>
-                                <p class="text-sm text-gray-500 mt-1">
-                                    Created: {{ conversation.created_at|date:"M d, Y H:i" }}
-                                </p>
-                            </div>
-                            <div class="flex gap-2">
-                                <button class="px-4 py-2 text-gray-300 hover:bg-gray-700 rounded-lg transition">
-                                    <i class="fas fa-edit"></i> Edit
-                                </button>
-                                <button class="px-4 py-2 text-red-400 hover:bg-red-900 hover:bg-opacity-30 rounded-lg transition">
-                                    <i class="fas fa-trash"></i> Delete
-                                </button>
+{% if error %}
+    <div class="mb-8 p-4 bg-red-900 bg-opacity-30 border border-red-500 rounded-xl flex items-center gap-4">
+        <div class="w-10 h-10 bg-red-500 bg-opacity-20 rounded-full flex items-center justify-center">
+            <i class="fas fa-exclamation-triangle text-red-400"></i>
+        </div>
+        <div>
+            <p class="text-red-300 font-semibold">Error loading conversations</p>
+            <p class="text-red-400 text-sm">{{ error }}</p>
+        </div>
+    </div>
+{% endif %}
+
+{% if conversations %}
+    <!-- Conversations Grid -->
+    <div class="space-y-6" id="conversations-container">
+        {% for conversation in conversations %}
+            <div class="conversation-card bg-gray-800 rounded-2xl border border-gray-700 overflow-hidden hover:border-blue-500 hover:border-opacity-50">
+                <!-- Card Header -->
+                <div class="p-6 border-b border-gray-700">
+                    <div class="flex justify-between items-start gap-4">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-3 mb-2">
+                                <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center">
+                                    <i class="fas fa-robot text-white"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-xl font-bold text-white">
+                                        {{ conversation.title|default:"Untitled Conversation" }}
+                                    </h3>
+                                    <p class="text-gray-500 text-sm flex items-center gap-2">
+                                        <i class="fas fa-calendar-alt"></i>
+                                        {{ conversation.created_at }}
+                                    </p>
+                                </div>
                             </div>
                         </div>
-
-                        <div class="flex gap-8 text-gray-400">
-                            <div class="flex items-center gap-2">
-                                <i class="fas fa-comments text-blue-400"></i>
-                                <span>{{ conversation.message_count }} messages</span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <i class="fas fa-images text-cyan-400"></i>
-                                <span>{{ conversation.image_count }} images</span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <i class="fas fa-clock text-gray-500"></i>
-                                <span>Updated: {{ conversation.updated_at|date:"M d, Y H:i" }}</span>
-                            </div>
+                        
+                        <!-- Action Buttons -->
+                        <div class="flex gap-2">
+                            <button class="expand-btn p-2 text-gray-400 hover:text-blue-400 hover:bg-gray-700 rounded-lg transition" onclick="toggleConversation('conv-{{ forloop.counter }}')">
+                                <i class="fas fa-chevron-down expand-icon"></i>
+                            </button>
+                            <button class="p-2 text-gray-400 hover:text-red-400 hover:bg-red-900 hover:bg-opacity-30 rounded-lg transition">
+                                <i class="fas fa-trash"></i>
+                            </button>
                         </div>
                     </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <div class="bg-gray-800 rounded-lg border border-gray-700 p-12 text-center">
-                <div class="mb-6">
-                    <i class="fas fa-inbox text-6xl text-gray-600"></i>
+                    
+                    <!-- Stats Row -->
+                    <div class="flex flex-wrap gap-4 mt-4">
+                        <div class="stat-badge flex items-center gap-2 px-3 py-1.5 bg-blue-900 bg-opacity-30 border border-blue-700 rounded-full text-sm">
+                            <i class="fas fa-comments text-blue-400"></i>
+                            <span class="text-blue-300">{{ conversation.message_count }} messages</span>
+                        </div>
+                        <div class="stat-badge flex items-center gap-2 px-3 py-1.5 bg-cyan-900 bg-opacity-30 border border-cyan-700 rounded-full text-sm">
+                            <i class="fas fa-images text-cyan-400"></i>
+                            <span class="text-cyan-300">{{ conversation.image_count }} images</span>
+                        </div>
+                        <div class="stat-badge flex items-center gap-2 px-3 py-1.5 bg-gray-700 bg-opacity-50 rounded-full text-sm">
+                            <i class="fas fa-user text-gray-400"></i>
+                            <span class="text-gray-400">{{ conversation.session_id|default:"Session" }}</span>
+                        </div>
+                    </div>
                 </div>
-                <h2 class="text-2xl font-bold text-white mb-2">No conversations yet</h2>
-                <p class="text-gray-400 mb-6">Start a new conversation to begin chatting with the assistant.</p>
-                <a href="#" class="inline-block px-8 py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition duration-300">
-                    Create First Conversation
-                </a>
+                
+                <!-- Expandable Messages Preview -->
+                <div id="conv-{{ forloop.counter }}" class="hidden">
+                    <div class="p-6 bg-gray-850 border-t border-gray-700" style="background: rgba(17, 24, 39, 0.5);">
+                        <div class="flex items-center gap-2 mb-4">
+                            <i class="fas fa-history text-gray-500"></i>
+                            <span class="text-gray-400 text-sm font-medium">Recent Messages</span>
+                        </div>
+                        <div class="space-y-3 messages-preview" data-conversation-id="{{ conversation.id }}">
+                            <div class="flex items-center justify-center py-4">
+                                <div class="audio-wave">
+                                    <span></span><span></span><span></span><span></span><span></span>
+                                </div>
+                                <span class="text-gray-500 text-sm ml-3">Loading messages...</span>
+                            </div>
+                        </div>
+                        <div class="mt-4 pt-4 border-t border-gray-700">
+                            <a href="/assistant/conversations/{{ conversation.id }}/?skip_auth=true" class="text-blue-400 hover:text-blue-300 text-sm font-medium flex items-center gap-2 transition">
+                                View Full Conversation <i class="fas fa-arrow-right"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
             </div>
-        {% endif %}
+        {% endfor %}
     </div>
-</div>
+{% else %}
+    <!-- Empty State -->
+    <div class="card-hover bg-gray-800 rounded-2xl border-2 border-dashed border-gray-700 p-16 text-center">
+        <div class="mb-8">
+            <div class="w-24 h-24 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-6">
+                <i class="fas fa-comments text-5xl text-gray-500"></i>
+            </div>
+            <h2 class="text-3xl font-bold text-white mb-3">No conversations yet</h2>
+            <p class="text-gray-400 text-lg max-w-md mx-auto">
+                Start a new conversation to begin chatting with your AI assistant. Your conversation history will appear here.
+            </p>
+        </div>
+        <a href="/" class="inline-block px-10 py-4 bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded-xl font-bold text-lg hover:shadow-lg transform hover:scale-105 transition duration-300">
+            <i class="fas fa-plus mr-2"></i> Start Your First Conversation
+        </a>
+    </div>
+{% endif %}
 
-<style>
-    .card-hover {
-        transition: transform 0.3s, box-shadow 0.3s;
+<script>
+    // Calculate total messages
+    document.addEventListener('DOMContentLoaded', function() {
+        let total = 0;
+        {% for conv in conversations %}
+            total += {{ conv.message_count|default:0 }};
+        {% endfor %}
+        document.getElementById('total-messages').textContent = total;
+    });
+
+    // Toggle conversation expansion
+    function toggleConversation(id) {
+        const element = document.getElementById(id);
+        const btn = element.previousElementSibling.querySelector('.expand-icon');
+        
+        if (element.classList.contains('hidden')) {
+            element.classList.remove('hidden');
+            btn.style.transform = 'rotate(180deg)';
+            
+            // Load messages if not already loaded
+            const preview = element.querySelector('.messages-preview');
+            const conversationId = preview.dataset.conversationId;
+            if (preview.children.length === 1) {
+                loadMessages(conversationId, preview);
+            }
+        } else {
+            element.classList.add('hidden');
+            btn.style.transform = 'rotate(0deg)';
+        }
     }
-    
-    .card-hover:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+
+    // Load conversation messages
+    async function loadMessages(conversationId, container) {
+        try {
+            const response = await fetch(`/assistant/conversations/${conversationId}/?skip_auth=true`);
+            const data = await response.json();
+            
+            if (data.success && data.conversation.messages) {
+                const messages = data.conversation.messages.slice(-5); // Last 5 messages
+                container.innerHTML = '';
+                
+                messages.forEach(msg => {
+                    const isUser = msg.role === 'user';
+                    const isSystem = msg.role === 'system';
+                    const isThought = msg.message_type === 'thought';
+                    
+                    let bgColor = isUser ? 'bg-blue-900 bg-opacity-40 border-blue-700' : 
+                                  isThought ? 'bg-purple-900 bg-opacity-30 border-purple-700' :
+                                  isSystem ? 'bg-yellow-900 bg-opacity-30 border-yellow-700' :
+                                  'bg-gray-700 bg-opacity-50 border-gray-600';
+                    
+                    let icon = isUser ? 'fa-user' : 
+                               isThought ? 'fa-brain' :
+                               msg.message_type === 'audio' ? 'fa-volume-up' :
+                               'fa-robot';
+                    
+                    let iconColor = isUser ? 'text-blue-400' : 
+                                    isThought ? 'text-purple-400' :
+                                    isSystem ? 'text-yellow-400' :
+                                    'text-cyan-400';
+                    
+                    let content = msg.content || '';
+                    if (msg.message_type === 'audio' && msg.audio_duration_seconds) {
+                        content = `🔊 Audio (${msg.audio_duration_seconds}s, ${msg.audio_size_kb} KB)`;
+                    } else if (content.length > 150) {
+                        content = content.substring(0, 150) + '...';
+                    }
+                    
+                    const bubble = document.createElement('div');
+                    bubble.className = `message-bubble flex gap-3 p-3 rounded-xl border ${bgColor}`;
+                    bubble.innerHTML = `
+                        <div class="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center flex-shrink-0">
+                            <i class="fas ${icon} ${iconColor} text-sm"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-1">
+                                <span class="text-sm font-medium ${iconColor}">${msg.role}</span>
+                                ${msg.message_type !== 'text' ? `<span class="text-xs px-2 py-0.5 bg-gray-800 rounded-full text-gray-400">${msg.message_type}</span>` : ''}
+                            </div>
+                            <p class="text-gray-300 text-sm break-words">${content}</p>
+                        </div>
+                    `;
+                    container.appendChild(bubble);
+                });
+                
+                if (messages.length === 0) {
+                    container.innerHTML = '<p class="text-gray-500 text-center py-4">No messages in this conversation</p>';
+                }
+            }
+        } catch (error) {
+            container.innerHTML = '<p class="text-red-400 text-center py-4">Failed to load messages</p>';
+        }
     }
-</style>
+</script>
 {% endblock %}

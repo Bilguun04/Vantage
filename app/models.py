@@ -5,7 +5,7 @@ class User(Document):
     """User model for MongoDB"""
     name = StringField(required=True, max_length=100)
     email = EmailField(required=True, unique=True)
-    auth0_id = StringField(unique=True)
+    auth0_id = StringField(unique=True, sparse=True)
     created_at = DateTimeField(default=datetime.utcnow)
     updated_at = DateTimeField(default=datetime.utcnow)
     is_active = BooleanField(default=True)
@@ -49,12 +49,44 @@ class ConversationImage(EmbeddedDocument):
 
 class ConversationMessage(EmbeddedDocument):
     """Embedded document for individual messages in conversation"""
-    role = StringField(choices=['user', 'assistant'], required=True)
+    role = StringField(choices=['user', 'assistant', 'system'], required=True)
     message_type = StringField(choices=['text', 'audio', 'image', 'thought'], default='text')
     content = StringField()  # Text content
     audio_data = BinaryField()  # Binary audio data if message_type is 'audio'
+    audio_duration_seconds = StringField()  # Human-readable audio duration
+    audio_size_kb = StringField()  # Audio file size in KB
     images = ListField(EmbeddedDocumentField(ConversationImage))  # List of images
     timestamp = DateTimeField(default=datetime.utcnow)
+    
+    def to_readable_dict(self):
+        """Convert message to human-readable dictionary (excludes binary data)"""
+        result = {
+            'role': self.role,
+            'type': self.message_type,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None,
+        }
+        
+        if self.content:
+            result['content'] = self.content
+        
+        if self.message_type == 'audio':
+            result['audio_info'] = {
+                'duration': self.audio_duration_seconds or 'unknown',
+                'size_kb': self.audio_size_kb or 'unknown',
+                'has_data': self.audio_data is not None
+            }
+        
+        if self.images:
+            result['images'] = [
+                {
+                    'mime_type': img.mime_type,
+                    'size_kb': img.size_kb,
+                    'uploaded_at': img.uploaded_at.isoformat() if img.uploaded_at else None
+                }
+                for img in self.images
+            ]
+        
+        return result
 
 class GeminiConversation(Document):
     """Gemini conversation session with history, images, and metadata"""
@@ -68,9 +100,9 @@ class GeminiConversation(Document):
     system_instruction = StringField()
     
     # Statistics
-    total_messages = StringField(default=0)
-    total_images = StringField(default=0)
-    total_audio_chunks = StringField(default=0)
+    total_messages = StringField(default='0')
+    total_images = StringField(default='0')
+    total_audio_chunks = StringField(default='0')
     
     # Timestamps
     created_at = DateTimeField(default=datetime.utcnow)
@@ -86,3 +118,29 @@ class GeminiConversation(Document):
             ('user_id', '-created_at')
         ]
     }
+    
+    def to_readable_dict(self, include_audio_binary=False):
+        """
+        Convert conversation to human-readable dictionary.
+        
+        Args:
+            include_audio_binary: If False (default), excludes binary audio data
+        """
+        return {
+            'id': str(self.id),
+            'session_id': self.session_id,
+            'user_id': self.user_id,
+            'title': self.title,
+            'model_used': self.model_used,
+            'stats': {
+                'total_messages': self.total_messages,
+                'total_images': self.total_images,
+                'total_audio_chunks': self.total_audio_chunks,
+            },
+            'timestamps': {
+                'created_at': self.created_at.isoformat() if self.created_at else None,
+                'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+                'last_activity': self.last_activity.isoformat() if self.last_activity else None,
+            },
+            'messages': [msg.to_readable_dict() for msg in self.messages]
+        }

@@ -8,6 +8,7 @@ from . import views
 urlpatterns = [
     # Conversation management
     path('conversations/', views.get_conversations, name='get_conversations'),
+    path('conversations/readable/', views.get_readable_conversations, name='get_readable_conversations'),
     path('conversations/<str:conversation_id>/', views.get_conversation_detail, name='get_conversation_detail'),
     path('conversations/<str:conversation_id>/delete/', views.delete_conversation, name='delete_conversation'),
     path('conversations/<str:conversation_id>/update-title/', views.update_conversation_title, name='update_conversation_title'),
