@@ -266,6 +266,9 @@ class GeminiLiveClient:
         self.audio_playback = AudioPlayback()
         self.screen_capture = ScreenCapture()
         
+        # Privacy mode - when enabled, screen captures are not sent
+        self.privacy_mode = False
+        
         # Push-to-talk configuration
         self.ptt_enabled = ptt_enabled and PYNPUT_AVAILABLE
         self.ptt_key = PTT_KEY_MAP.get(ptt_key.lower(), keyboard.Key.ctrl_r) if PYNPUT_AVAILABLE else None
@@ -291,7 +294,11 @@ class GeminiLiveClient:
             self.ptt_started = False
             self.ptt_screen_sent = False  # Track if screen has been sent
             # Capture screen immediately when PTT starts (but don't send yet)
-            self.ptt_screen_data = self.screen_capture.capture()
+            # Skip screen capture if privacy mode is enabled
+            if self.privacy_mode:
+                self.ptt_screen_data = None
+            else:
+                self.ptt_screen_data = self.screen_capture.capture()
             self.ptt_audio_chunks_sent = 0  # Count audio chunks before sending screen
             # Clear any buffered audio
             while not self.audio_queue.empty():
@@ -580,6 +587,10 @@ class GeminiLiveClient:
         if not self.gemini_ready:
             print("  ⏳ Waiting for Gemini to connect...")
             return
+        if self.privacy_mode:
+            print("  🔒 Privacy mode is enabled - screen sharing is paused")
+            print("     Say 'disable privacy mode' to resume screen sharing")
+            return
         try:
             screen_data = self.screen_capture.capture()
             if screen_data:
@@ -636,7 +647,15 @@ class GeminiLiveClient:
 
                 elif msg_type == "tool_call":
                     tool = data.get("tool", "unknown")
-                    print(f"\nUsing tool: {tool}")
+                    print(f"\n  🔧 Using tool: {tool}")
+
+                elif msg_type == "privacy_mode":
+                    self.privacy_mode = data.get("enabled", False)
+                    if self.privacy_mode:
+                        print("\n  🔒 Privacy mode ENABLED - screen sharing paused")
+                    else:
+                        print("\n  🔓 Privacy mode DISABLED - screen sharing resumed")
+                    logger.info(f"Privacy mode set to: {self.privacy_mode}")
 
                 elif msg_type == "error":
                     logger.error(f"Server error: {data.get('message')}")
@@ -658,6 +677,7 @@ class GeminiLiveClient:
         print("Commands:")
         print("  [text]    - Send text message to assistant")
         print("  /describe - Capture screen + ask model to describe it")
+        print("  /privacy  - Toggle privacy mode (or say it verbally)")
         print("  /quit     - Exit the client")
         print("")
         print("Features:")
@@ -667,6 +687,7 @@ class GeminiLiveClient:
         else:
             print(f"  🎤 Voice: {'VAD mode - auto-detects speech' if ENABLE_AUDIO_CAPTURE else 'DISABLED'}")
             print(f"  🖥️  Screen: captured when speech starts")
+        print(f"  🔒 Privacy: Say 'enable/disable privacy mode' to toggle")
         print("")
         if self.ptt_enabled:
             print(f"Tip: Hold [{self.ptt_key_name.upper()}] while speaking, release when done")
@@ -696,6 +717,14 @@ class GeminiLiveClient:
 
                 if user_input.lower() == "/describe":
                     await self.describe_screen()
+                    continue
+
+                if user_input.lower() == "/privacy":
+                    self.privacy_mode = not self.privacy_mode
+                    if self.privacy_mode:
+                        print("  🔒 Privacy mode ENABLED - screen sharing paused")
+                    else:
+                        print("  🔓 Privacy mode DISABLED - screen sharing resumed")
                     continue
 
                 if user_input:
