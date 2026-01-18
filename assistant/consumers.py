@@ -23,7 +23,29 @@ logger = logging.getLogger(__name__)
 # Model configuration - using native audio dialog model
 MODEL_ID = "gemini-2.5-flash-native-audio-preview-12-2025"
 SYSTEM_INSTRUCTION = """You are a helpful background assistant. You can see the user's screen. 
-Use this visual context to answer questions. Use Google Search if you need up-to-date information."""
+Use this visual context to answer questions. Use Google Search if you need up-to-date information.
+
+You have a privacy mode feature. When the user asks to enable or disable privacy mode (or similar 
+requests like "stop sharing my screen", "hide my screen", "resume screen sharing"), use the 
+toggle_privacy_mode tool. After toggling, briefly confirm the change verbally."""
+
+# Privacy mode tool definition
+PRIVACY_MODE_TOOL = {
+    "function_declarations": [{
+        "name": "toggle_privacy_mode",
+        "description": "Toggle privacy mode on or off. When privacy mode is ON, screen sharing is paused and the assistant cannot see the user's screen. When OFF, screen sharing resumes. Use this when the user requests privacy, wants to hide their screen, or wants to resume screen sharing.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean", 
+                    "description": "True to enable privacy mode (stop screen sharing), False to disable it (resume screen sharing)"
+                }
+            },
+            "required": ["enabled"]
+        }
+    }]
+}
 
 
 class GeminiLiveConsumer(AsyncWebsocketConsumer):
@@ -114,11 +136,14 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                     "message": f"Connecting to Gemini... (attempt {attempt + 1}/{max_retries})"
                 }))
 
-                # Configure the Live session with Google Search tool
+                # Configure the Live session with Google Search and privacy mode tools
                 # Note: native-audio model only supports AUDIO response modality
                 config = {
                     "response_modalities": ["AUDIO"],
-                    "tools": [{"google_search": {}}],
+                    "tools": [
+                        {"google_search": {}},
+                        PRIVACY_MODE_TOOL
+                    ],
                     "system_instruction": SYSTEM_INSTRUCTION,
                 }
 
@@ -668,14 +693,49 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                         "type": "turn_complete"
                     }))
 
-            # Handle tool calls (Google Search)
+            # Handle tool calls (Google Search, Privacy Mode, etc.)
             if hasattr(response, 'tool_call') and response.tool_call:
                 logger.info(f"Tool call: {response.tool_call}")
-                await self.send(text_data=json.dumps({
-                    "type": "tool_call",
-                    "tool": "google_search",
-                    "status": "executing"
-                }))
+                
+                # Process each function call
+                function_responses = []
+                for fc in response.tool_call.function_calls:
+                    if fc.name == "toggle_privacy_mode":
+                        # Extract the enabled parameter
+                        enabled = fc.args.get("enabled", True)
+                        logger.info(f"Privacy mode toggle requested: {enabled}")
+                        
+                        # Send privacy mode command to client
+                        await self.send(text_data=json.dumps({
+                            "type": "privacy_mode",
+                            "enabled": enabled
+                        }))
+                        
+                        # Build tool response for Gemini
+                        status = "enabled" if enabled else "disabled"
+                        function_responses.append({
+                            "name": fc.name,
+                            "id": fc.id,
+                            "response": {"status": "success", "privacy_mode": status}
+                        })
+                        logger.info(f"Privacy mode {status}")
+                    else:
+                        # Other tool calls (like google_search) - handled automatically by Gemini
+                        await self.send(text_data=json.dumps({
+                            "type": "tool_call",
+                            "tool": fc.name,
+                            "status": "executing"
+                        }))
+                
+                # Send tool responses back to Gemini
+                if function_responses:
+                    try:
+                        await self.session.send_tool_response(
+                            function_responses=function_responses
+                        )
+                        logger.info(f"Tool response sent to Gemini: {function_responses}")
+                    except Exception as e:
+                        logger.error(f"Error sending tool response: {e}")
 
             # Handle tool call cancellation
             if hasattr(response, 'tool_call_cancellation') and response.tool_call_cancellation:
