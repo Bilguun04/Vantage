@@ -204,13 +204,10 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
             image_bytes = base64.b64decode(data["screen_frame"])
             await self._send_image_to_gemini(image_bytes, with_prompt=data["text"])
         
-        # Handle screen only
+        # Handle screen only (mid-stream context, don't trigger response)
         elif has_screen:
             image_bytes = base64.b64decode(data["screen_frame"])
-            await self._send_image_to_gemini(
-                image_bytes, 
-                with_prompt="[Current screen context - acknowledge briefly]"
-            )
+            await self._send_screen_context(image_bytes)
         
         # Handle text only
         elif has_text:
@@ -230,6 +227,25 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
             )
         except Exception as e:
             logger.error(f"Error sending audio to Gemini: {e}")
+
+    async def _send_screen_context(self, image_bytes: bytes):
+        """
+        Send screen as realtime media input (for mid-stream visual context).
+        
+        This is used when screen is sent during an audio stream - it doesn't
+        trigger a response, just provides visual context for the ongoing audio.
+        """
+        try:
+            mime_type = "image/jpeg"
+            if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                mime_type = "image/png"
+            
+            logger.info(f"Sending screen context via realtime media ({len(image_bytes)/1024:.1f} KB)")
+            await self.session.send_realtime_input(
+                media={"data": image_bytes, "mime_type": mime_type}
+            )
+        except Exception as e:
+            logger.error(f"Error sending screen context: {e}")
     
     async def _send_screen_then_audio(self, image_bytes: bytes, audio_bytes: bytes):
         """
