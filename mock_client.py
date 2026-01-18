@@ -7,9 +7,11 @@ sends them to the Django WebSocket server, and plays back audio responses.
 
 Usage:
     python mock_client.py [--server ws://localhost:8000/ws/live-session/]
+    python mock_client.py --ptt         # Enable push-to-talk mode (Right Ctrl)
+    python mock_client.py --ptt-key f5  # Use F5 as push-to-talk key
 
 Requirements:
-    pip install websockets sounddevice numpy mss pillow
+    pip install websockets sounddevice numpy mss pillow pynput
 """
 
 import argparse
@@ -36,6 +38,15 @@ except ImportError:
     print("Warning: sounddevice not available. Audio capture/playback disabled.")
     print("Install with: pip install sounddevice numpy")
 
+# Global hotkey support for push-to-talk
+try:
+    from pynput import keyboard
+    PYNPUT_AVAILABLE = True
+except ImportError:
+    PYNPUT_AVAILABLE = False
+    print("Warning: pynput not available. Push-to-talk disabled.")
+    print("Install with: pip install pynput")
+
 # WebSocket
 import websockets
 
@@ -59,10 +70,50 @@ SCREEN_MAX_SIZE = (640, 360)  # 360p resolution to reduce payload size
 ENABLE_SCREEN_CAPTURE = True  # Set to False to disable screen capture for testing
 ENABLE_AUDIO_CAPTURE = True  # Set to False to disable audio capture/sending
 
-# Voice activity detection settings
+# Voice activity detection settings (used when PTT is disabled)
 SILENCE_THRESHOLD = 100  # Volume level below this = silence
 SILENCE_DURATION_TO_END_TURN = 1.5  # Seconds of silence before signaling end of speech
 SPEECH_DETECTED_THRESHOLD = 200  # Volume level to consider as speech starting
+
+# Push-to-talk key mapping (string name -> pynput key)
+PTT_KEY_MAP = {}
+if PYNPUT_AVAILABLE:
+    PTT_KEY_MAP = {
+        # Character keys (for PTT that doesn't conflict with system shortcuts)
+        'grave': keyboard.KeyCode.from_char('`'),  # Backtick - classic PTT key
+        'backslash': keyboard.KeyCode.from_char('\\'),
+        'insert': keyboard.Key.insert if hasattr(keyboard.Key, 'insert') else None,
+        # Special keys
+        'ctrl_r': keyboard.Key.ctrl_r,
+        'ctrl_l': keyboard.Key.ctrl_l,
+        'alt_r': keyboard.Key.alt_r,
+        'alt_l': keyboard.Key.alt_l,
+        'shift_r': keyboard.Key.shift_r,
+        'shift_l': keyboard.Key.shift_l,
+        'space': keyboard.Key.space,
+        'tab': keyboard.Key.tab,
+        'caps_lock': keyboard.Key.caps_lock,
+        # Function keys
+        'f1': keyboard.Key.f1,
+        'f2': keyboard.Key.f2,
+        'f3': keyboard.Key.f3,
+        'f4': keyboard.Key.f4,
+        'f5': keyboard.Key.f5,
+        'f6': keyboard.Key.f6,
+        'f7': keyboard.Key.f7,
+        'f8': keyboard.Key.f8,
+        'f9': keyboard.Key.f9,
+        'f10': keyboard.Key.f10,
+        'f11': keyboard.Key.f11,
+        'f12': keyboard.Key.f12,
+    }
+    # Remove None entries (keys not available on this platform)
+    PTT_KEY_MAP = {k: v for k, v in PTT_KEY_MAP.items() if v is not None}
+    # Add scroll_lock only if available (not on macOS)
+    if hasattr(keyboard.Key, 'scroll_lock'):
+        PTT_KEY_MAP['scroll_lock'] = keyboard.Key.scroll_lock
+
+DEFAULT_PTT_KEY = 'grave'  # Backtick key - classic PTT, no system conflicts
 
 
 class AudioCapture:
@@ -204,7 +255,7 @@ class ScreenCapture:
 class GeminiLiveClient:
     """WebSocket client for Gemini Live assistant."""
 
-    def __init__(self, server_url: str):
+    def __init__(self, server_url: str, ptt_enabled: bool = False, ptt_key: str = DEFAULT_PTT_KEY):
         self.server_url = server_url
         self.websocket = None
         self.is_running = False
@@ -214,6 +265,79 @@ class GeminiLiveClient:
         self.audio_capture = AudioCapture(self.audio_queue)
         self.audio_playback = AudioPlayback()
         self.screen_capture = ScreenCapture()
+        
+        # Push-to-talk configuration
+        self.ptt_enabled = ptt_enabled and PYNPUT_AVAILABLE
+        self.ptt_key = PTT_KEY_MAP.get(ptt_key.lower(), keyboard.Key.ctrl_r) if PYNPUT_AVAILABLE else None
+        self.ptt_key_name = ptt_key
+        self.ptt_active = False  # True while PTT key is held
+        self.ptt_releasing = False  # True when key released, waiting for flush
+        self.ptt_screen_data = None  # Screen captured when PTT started
+        self.ptt_screen_sent = False  # True after screen has been sent
+        self.ptt_audio_chunks_sent = 0  # Count chunks before sending screen
+        self.ptt_started = False  # True after first audio chunk sent
+        self.keyboard_listener = None
+        self._loop = None  # Store event loop for cross-thread scheduling
+
+    def _on_ptt_press(self, key):
+        """Handle PTT key press - start recording."""
+        # Handle both Key objects and KeyCode objects (for character keys like grave)
+        key_matches = (key == self.ptt_key) or (
+            hasattr(key, 'char') and hasattr(self.ptt_key, 'char') and 
+            key.char == self.ptt_key.char
+        )
+        if key_matches and not self.ptt_active:
+            self.ptt_active = True
+            self.ptt_started = False
+            self.ptt_screen_sent = False  # Track if screen has been sent
+            # Capture screen immediately when PTT starts (but don't send yet)
+            self.ptt_screen_data = self.screen_capture.capture()
+            self.ptt_audio_chunks_sent = 0  # Count audio chunks before sending screen
+            # Clear any buffered audio
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except:
+                    pass
+            # Schedule UI update on the event loop
+            if self._loop:
+                self._loop.call_soon_threadsafe(
+                    lambda: print("  🎤 [Recording... release key to send]")
+                )
+            logger.info(f"PTT activated (key: {self.ptt_key_name})")
+
+    def _on_ptt_release(self, key):
+        """Handle PTT key release - signal to flush remaining audio."""
+        # Handle both Key objects and KeyCode objects (for character keys like grave)
+        key_matches = (key == self.ptt_key) or (
+            hasattr(key, 'char') and hasattr(self.ptt_key, 'char') and 
+            key.char == self.ptt_key.char
+        )
+        if key_matches and self.ptt_active:
+            self.ptt_active = False
+            # Signal the audio loop to flush remaining audio before sending audio_end
+            if self.ptt_started:
+                self.ptt_releasing = True
+            logger.info("PTT released - flushing audio buffer")
+
+    def _start_keyboard_listener(self):
+        """Start the global keyboard listener for PTT."""
+        if not PYNPUT_AVAILABLE or not self.ptt_enabled:
+            return
+        
+        self.keyboard_listener = keyboard.Listener(
+            on_press=self._on_ptt_press,
+            on_release=self._on_ptt_release
+        )
+        self.keyboard_listener.start()
+        logger.info(f"PTT keyboard listener started (key: {self.ptt_key_name})")
+
+    def _stop_keyboard_listener(self):
+        """Stop the global keyboard listener."""
+        if self.keyboard_listener:
+            self.keyboard_listener.stop()
+            self.keyboard_listener = None
+            logger.info("PTT keyboard listener stopped")
 
     async def connect(self):
         """Connect to the WebSocket server."""
@@ -225,6 +349,9 @@ class GeminiLiveClient:
     async def run(self):
         """Main run loop."""
         try:
+            # Store event loop for cross-thread scheduling (PTT callbacks)
+            self._loop = asyncio.get_event_loop()
+            
             await self.connect()
 
             # Start audio capture and playback
@@ -233,6 +360,10 @@ class GeminiLiveClient:
             else:
                 logger.info("Audio capture DISABLED")
             self.audio_playback.start()  # Always enable playback to hear responses
+            
+            # Start PTT keyboard listener if enabled
+            if self.ptt_enabled:
+                self._start_keyboard_listener()
 
             # Run tasks concurrently
             await asyncio.gather(
@@ -250,16 +381,108 @@ class GeminiLiveClient:
             await self.cleanup()
 
     async def _send_audio_loop(self):
-        """Stream audio to server with speech detection and screen context.
+        """Stream audio to server.
         
-        Strategy: When speech starts, capture screen and send with first audio chunk.
-        Continue streaming audio until speech ends.
+        Two modes:
+        - PTT mode: Only send audio while push-to-talk key is held
+        - VAD mode: Use voice activity detection to detect speech start/end
         """
         if not ENABLE_AUDIO_CAPTURE:
             while self.is_running:
                 await asyncio.sleep(1.0)
             return
         
+        if self.ptt_enabled:
+            await self._send_audio_loop_ptt()
+        else:
+            await self._send_audio_loop_vad()
+
+    async def _send_audio_loop_ptt(self):
+        """PTT mode: Stream audio only while push-to-talk key is held.
+        
+        Strategy: Send audio first to establish voice context, then send screen
+        after a few chunks. This helps the model understand it's receiving a
+        voice query with visual context, rather than treating them as separate inputs.
+        """
+        CHUNKS_BEFORE_SCREEN = 3  # Send screen after this many audio chunks
+        
+        while self.is_running:
+            try:
+                # Wait for Gemini to be ready
+                if not self.gemini_ready:
+                    while not self.audio_queue.empty():
+                        self.audio_queue.get_nowait()
+                    await asyncio.sleep(0.1)
+                    continue
+                
+                # Process audio when PTT is active OR releasing (flushing)
+                if self.ptt_active or self.ptt_releasing:
+                    # Collect audio chunks
+                    audio_buffer = b''
+                    while not self.audio_queue.empty():
+                        audio_buffer += self.audio_queue.get_nowait()
+                    
+                    if audio_buffer:
+                        self.ptt_started = True
+                        self.ptt_audio_chunks_sent += 1
+                        
+                        # Always send audio
+                        audio_b64 = base64.b64encode(audio_buffer).decode("utf-8")
+                        await self.websocket.send(json.dumps({"audio_chunk": audio_b64}))
+                        
+                        # After a few audio chunks, send screen context
+                        # This ensures model knows it's a voice turn before seeing the screen
+                        if (not self.ptt_screen_sent and 
+                            self.ptt_screen_data and 
+                            self.ptt_audio_chunks_sent >= CHUNKS_BEFORE_SCREEN):
+                            self.ptt_screen_sent = True
+                            screen_b64 = base64.b64encode(self.ptt_screen_data).decode("utf-8")
+                            await self.websocket.send(json.dumps({"screen_frame": screen_b64}))
+                            logger.info(f"PTT: Screen sent after {self.ptt_audio_chunks_sent} audio chunks ({len(self.ptt_screen_data)/1024:.1f} KB)")
+                    
+                    # Handle PTT release: flush complete, send audio_end
+                    if self.ptt_releasing:
+                        # Wait a moment for any final audio to arrive
+                        await asyncio.sleep(0.2)
+                        
+                        # Flush any remaining audio that arrived during the delay
+                        audio_buffer = b''
+                        while not self.audio_queue.empty():
+                            audio_buffer += self.audio_queue.get_nowait()
+                        if audio_buffer:
+                            audio_b64 = base64.b64encode(audio_buffer).decode("utf-8")
+                            await self.websocket.send(json.dumps({"audio_chunk": audio_b64}))
+                        
+                        # If screen wasn't sent yet (very short PTT), send it now
+                        if not self.ptt_screen_sent and self.ptt_screen_data:
+                            screen_b64 = base64.b64encode(self.ptt_screen_data).decode("utf-8")
+                            await self.websocket.send(json.dumps({"screen_frame": screen_b64}))
+                            logger.info(f"PTT: Screen sent on release ({len(self.ptt_screen_data)/1024:.1f} KB)")
+                        
+                        # Now send audio_end
+                        await self.websocket.send(json.dumps({"audio_end": True}))
+                        print("  ⏸️  [Processing...]")
+                        logger.info("PTT: Audio end sent after flush")
+                        
+                        # Reset state
+                        self.ptt_releasing = False
+                        self.ptt_started = False
+                        self.ptt_screen_sent = False
+                        self.ptt_audio_chunks_sent = 0
+                        self.ptt_screen_data = None
+                else:
+                    # Discard audio when PTT is not active (and not releasing)
+                    while not self.audio_queue.empty():
+                        self.audio_queue.get_nowait()
+                
+                await asyncio.sleep(AUDIO_SEND_INTERVAL)
+                
+            except Exception as e:
+                logger.error(f"Error sending audio (PTT): {e}")
+                await asyncio.sleep(0.1)
+
+    async def _send_audio_loop_vad(self):
+        """VAD mode: Use voice activity detection to detect speech start/end."""
         is_streaming = False
         silence_counter = 0
         SILENCE_INTERVALS_TO_STOP = int(SILENCE_DURATION_TO_END_TURN / AUDIO_SEND_INTERVAL)
@@ -324,7 +547,7 @@ class GeminiLiveClient:
                 await asyncio.sleep(AUDIO_SEND_INTERVAL)
                 
             except Exception as e:
-                logger.error(f"Error sending audio: {e}")
+                logger.error(f"Error sending audio (VAD): {e}")
                 await asyncio.sleep(0.1)
 
     async def _send_screen_loop(self):
@@ -434,14 +657,21 @@ class GeminiLiveClient:
         print("=" * 50)
         print("Commands:")
         print("  [text]    - Send text message to assistant")
-        print("  /describe - Capture screen + ask model to describe it (RELIABLE)")
+        print("  /describe - Capture screen + ask model to describe it")
         print("  /quit     - Exit the client")
         print("")
         print("Features:")
-        print(f"  🎤 Voice: {'ON - streams audio with screen context' if ENABLE_AUDIO_CAPTURE else 'DISABLED'}")
-        print(f"  🖥️  Screen: captured when speech starts")
+        if self.ptt_enabled:
+            print(f"  🎤 Voice: PTT mode - hold [{self.ptt_key_name.upper()}] to talk")
+            print(f"  🖥️  Screen: captured when PTT key pressed")
+        else:
+            print(f"  🎤 Voice: {'VAD mode - auto-detects speech' if ENABLE_AUDIO_CAPTURE else 'DISABLED'}")
+            print(f"  🖥️  Screen: captured when speech starts")
         print("")
-        print("Tip: /describe is most reliable for screen questions")
+        if self.ptt_enabled:
+            print(f"Tip: Hold [{self.ptt_key_name.upper()}] while speaking, release when done")
+        else:
+            print("Tip: Use --ptt flag for push-to-talk mode")
         print("=" * 50 + "\n")
 
         loop = asyncio.get_event_loop()
@@ -485,6 +715,7 @@ class GeminiLiveClient:
     async def cleanup(self):
         """Clean up resources."""
         self.is_running = False
+        self._stop_keyboard_listener()
         self.audio_capture.stop()
         self.audio_playback.stop()
         if self.websocket:
@@ -494,16 +725,61 @@ class GeminiLiveClient:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Mock client for Gemini Live Voice Assistant"
+        description="Mock client for Gemini Live Voice Assistant",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Push-to-talk keys:
+  grave             - Backtick/tilde key (default, classic PTT key)
+  backslash         - Backslash key
+  ctrl_r, ctrl_l    - Right/Left Control
+  alt_r, alt_l      - Right/Left Alt/Option
+  shift_r, shift_l  - Right/Left Shift
+  f1-f12            - Function keys (note: some have macOS bindings)
+  space, tab        - Space or Tab key
+  caps_lock         - Caps Lock (may need OS config)
+
+Examples:
+  python mock_client.py --ptt              # PTT with Right Ctrl
+  python mock_client.py --ptt --ptt-key f5 # PTT with F5
+  python mock_client.py                    # Voice activity detection mode
+
+Note: On macOS, pynput requires Accessibility permissions.
+      Go to System Settings > Privacy & Security > Accessibility
+      and add your terminal app.
+"""
     )
     parser.add_argument(
         "--server",
         default="ws://localhost:8000/ws/live-session/",
         help="WebSocket server URL"
     )
+    parser.add_argument(
+        "--ptt",
+        action="store_true",
+        help="Enable push-to-talk mode (hold key to record)"
+    )
+    parser.add_argument(
+        "--ptt-key",
+        default=DEFAULT_PTT_KEY,
+        help=f"Key for push-to-talk (default: {DEFAULT_PTT_KEY})"
+    )
     args = parser.parse_args()
+    
+    # Validate PTT key
+    if args.ptt and args.ptt_key.lower() not in PTT_KEY_MAP:
+        print(f"Error: Unknown PTT key '{args.ptt_key}'")
+        print(f"Available keys: {', '.join(sorted(PTT_KEY_MAP.keys()))}")
+        sys.exit(1)
+    
+    if args.ptt and not PYNPUT_AVAILABLE:
+        print("Error: Push-to-talk requires pynput. Install with: pip install pynput")
+        sys.exit(1)
 
-    client = GeminiLiveClient(args.server)
+    client = GeminiLiveClient(
+        server_url=args.server,
+        ptt_enabled=args.ptt,
+        ptt_key=args.ptt_key
+    )
 
     try:
         asyncio.run(client.run())
