@@ -183,31 +183,42 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         """
         Process and forward client data to Gemini.
         """
-        # Handle audio chunk
-        if "audio_chunk" in data and data["audio_chunk"]:
-            audio_bytes = base64.b64decode(data["audio_chunk"])
-            await self._send_audio_to_gemini(audio_bytes)
-        
-        # Handle audio end signal (user stopped speaking)
-        # Note: Gemini's built-in VAD handles this, so we just log it
-        if data.get("audio_end"):
-            logger.info("Client signaled audio end (Gemini VAD will handle turn completion)")
-
-        # Handle screen frame - check if there's also a text prompt
+        has_audio_chunk = "audio_chunk" in data and data["audio_chunk"]
         has_screen = "screen_frame" in data and data["screen_frame"]
         has_text = "text" in data and data["text"]
         
-        if has_screen and has_text:
-            # Send image AND text together (best for visual queries)
+        # Handle screen + audio (voice with visual context)
+        # Strategy: Send screen first with prompt, then stream audio
+        if has_screen and has_audio_chunk:
+            image_bytes = base64.b64decode(data["screen_frame"])
+            audio_bytes = base64.b64decode(data["audio_chunk"])
+            await self._send_screen_then_audio(image_bytes, audio_bytes)
+        
+        # Handle audio-only chunk (streaming)
+        elif has_audio_chunk:
+            audio_bytes = base64.b64decode(data["audio_chunk"])
+            await self._send_audio_to_gemini(audio_bytes)
+        
+        # Handle screen + text (like /describe command) - THIS WORKS RELIABLY
+        elif has_screen and has_text:
             image_bytes = base64.b64decode(data["screen_frame"])
             await self._send_image_to_gemini(image_bytes, with_prompt=data["text"])
+        
+        # Handle screen only
         elif has_screen:
-            # Screen only - send as context (no prompt, turn not complete)
             image_bytes = base64.b64decode(data["screen_frame"])
-            await self._send_image_to_gemini(image_bytes)
+            await self._send_image_to_gemini(
+                image_bytes, 
+                with_prompt="[Current screen context - acknowledge briefly]"
+            )
+        
+        # Handle text only
         elif has_text:
-            # Text only
             await self._send_text_to_gemini(data["text"])
+        
+        # Handle audio end signal
+        if data.get("audio_end"):
+            logger.info("Client signaled audio end")
 
     async def _send_audio_to_gemini(self, audio_bytes: bytes):
         """
@@ -217,12 +228,48 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
             await self.session.send_realtime_input(
                 audio={"data": audio_bytes, "mime_type": "audio/pcm"}
             )
-            # Don't log every chunk - too verbose. Log at debug level only.
         except Exception as e:
             logger.error(f"Error sending audio to Gemini: {e}")
     
-    # Note: Gemini Live API has built-in VAD that automatically detects
-    # when the user stops speaking, so we don't need manual signaling.
+    async def _send_screen_then_audio(self, image_bytes: bytes, audio_bytes: bytes):
+        """
+        Send screen context AND audio via realtime input (sequentially).
+        
+        Both must be sent via send_realtime_input so the model correlates them.
+        Using send_client_content for image + send_realtime_input for audio
+        causes the model to not associate them properly (leading to hallucination).
+        
+        Note: send_realtime_input only accepts one argument at a time, so we send
+        media first, then audio, in quick succession.
+        """
+        try:
+            # Detect image type
+            mime_type = "image/jpeg"
+            if image_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                mime_type = "image/png"
+            
+            logger.info(f"Sending screen ({len(image_bytes)/1024:.1f} KB) + audio via realtime input")
+            
+            # Send screen first via realtime input (as media/video frame)
+            await self.session.send_realtime_input(
+                media={"data": image_bytes, "mime_type": mime_type}
+            )
+            
+            # Then send audio via realtime input (same API keeps them correlated)
+            await self.session.send_realtime_input(
+                audio={"data": audio_bytes, "mime_type": "audio/pcm"}
+            )
+            logger.info("Screen + audio sent via sequential realtime input calls")
+            
+        except Exception as e:
+            logger.error(f"Error sending screen+audio: {e}")
+            # Fallback: try audio only
+            try:
+                await self.session.send_realtime_input(
+                    audio={"data": audio_bytes, "mime_type": "audio/pcm"}
+                )
+            except Exception:
+                pass
 
     async def _send_image_to_gemini(self, image_bytes: bytes, with_prompt: str = None):
         """
@@ -284,6 +331,9 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         try:
             logger.info("Starting response listener...")
             turn_count = 0
+            consecutive_errors = 0
+            MAX_CONSECUTIVE_ERRORS = 3  # Stop after 3 consecutive errors
+            
             while self.is_connected and self.gemini_ready:
                 try:
                     logger.debug(f"Waiting for turn {turn_count + 1}...")
@@ -293,21 +343,36 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
                             logger.info("Disconnected, stopping listener")
                             return
                         await self._handle_gemini_response(response)
+                        consecutive_errors = 0  # Reset on successful response
                     # Turn completed, loop to wait for next turn
                     turn_count += 1
+                    consecutive_errors = 0  # Reset on successful turn
                     logger.info(f"Turn {turn_count} completed, ready for next input")
                 except Exception as turn_error:
                     error_str = str(turn_error)
                     if "1000" in error_str:
-                        # Session closed normally
                         logger.info("Session closed normally")
                         break
                     elif "1001" in error_str or "going away" in error_str.lower():
                         logger.info("Session ended by server")
                         break
+                    elif "precondition" in error_str.lower() or "1007" in error_str:
+                        # Session is broken - stop immediately
+                        consecutive_errors += 1
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                            logger.error(f"Session broken (precondition failed {consecutive_errors}x), stopping")
+                            self.gemini_ready = False
+                            await self.send_error("Gemini session failed. Please reconnect.")
+                            break
+                        await asyncio.sleep(1.0)  # Longer delay on precondition errors
                     else:
-                        logger.error(f"Turn error: {turn_error}")
-                        # Don't break - try to continue listening
+                        consecutive_errors += 1
+                        logger.error(f"Turn error ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS}): {turn_error}")
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                            logger.error("Too many consecutive errors, stopping listener")
+                            self.gemini_ready = False
+                            await self.send_error("Connection to Gemini lost. Please reconnect.")
+                            break
                         await asyncio.sleep(0.5)
                     
         except asyncio.CancelledError:
