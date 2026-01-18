@@ -220,17 +220,6 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         # Strategy: Send screen first with prompt, then stream audio
         if has_screen and has_audio_chunk:
             image_bytes = base64.b64decode(data["screen_frame"])
-            audio_bytes = base64.b64decode(data["audio_chunk"])
-            await self._send_screen_then_audio(image_bytes, audio_bytes)
-        
-        # Handle audio-only chunk (streaming)
-        elif has_audio_chunk:
-            audio_bytes = base64.b64decode(data["audio_chunk"])
-            await self._send_audio_to_gemini(audio_bytes)
-        
-        # Handle screen + text (like /describe command) - THIS WORKS RELIABLY
-        elif has_screen and has_text:
-            image_bytes = base64.b64decode(data["screen_frame"])
             # Save image to current turn
             await self._save_image_to_db(image_bytes, mime_type="image/jpeg")
             await self._send_image_to_gemini(image_bytes, with_prompt=data["text"])
