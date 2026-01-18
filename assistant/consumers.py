@@ -252,10 +252,21 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         has_text = "text" in data and data["text"]
         
         # Handle screen + audio (voice with visual context)
-        # Strategy: Send screen first with prompt, then stream audio
+        # Strategy: Send screen then audio via realtime input
         if has_screen and has_audio_chunk:
             image_bytes = base64.b64decode(data["screen_frame"])
-            # Save image to current turn
+            audio_bytes = base64.b64decode(data["audio_chunk"])
+            await self._save_image_to_db(image_bytes, mime_type="image/jpeg")
+            await self._send_screen_then_audio(image_bytes, audio_bytes)
+        
+        # Handle audio-only chunk (PTT streaming)
+        elif has_audio_chunk:
+            audio_bytes = base64.b64decode(data["audio_chunk"])
+            await self._send_audio_to_gemini(audio_bytes)
+        
+        # Handle screen + text (like /describe command)
+        elif has_screen and has_text:
+            image_bytes = base64.b64decode(data["screen_frame"])
             await self._save_image_to_db(image_bytes, mime_type="image/jpeg")
             await self._send_image_to_gemini(image_bytes, with_prompt=data["text"])
         
@@ -263,11 +274,9 @@ class GeminiLiveConsumer(AsyncWebsocketConsumer):
         elif has_screen:
             image_bytes = base64.b64decode(data["screen_frame"])
             await self._save_image_to_db(image_bytes, mime_type="image/jpeg")
-            await self._send_image_to_gemini(
-                image_bytes, 
-                with_prompt="[Current screen context - acknowledge briefly]"
-            )
+            await self._send_screen_context(image_bytes)
 
+        # Handle text only
         elif has_text:
             await self._send_text_to_gemini(data["text"])
         
